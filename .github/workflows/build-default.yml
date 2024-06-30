@@ -1,0 +1,59 @@
+name: Default Workflow
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches: [ "development", "build", "main" ]
+  pull_request:
+    branches: [ "development", "build", "main" ]
+
+env:      
+  DOCKER_REGISTRY_URL: ghcr.io/henkhogan/rs_nordvpn_proxy  
+  DOCKER_REGISTRY_USERNAME: ${{ vars.DOCKER_REGISTRY_USERNAME }}
+  DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}  
+  DOCKER_TARGET_PLATFORM_ARCHITECTURE: "arm64"
+  DOCKER_TARGET_PLATFORM_OS: "linux"
+  DOCKER_BUILDKIT: 1
+  BUILDKIT_INLINE_CACHE: 1
+  BUILD_SOURCE_IMAGE: "ubuntu:24.04"
+  APP_SOURCE_IMAGE: "ubuntu:24.04"
+
+jobs:
+
+  build:
+    runs-on: [self-hosted, linux, ARM64]
+      
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo/predictive
+
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ vars.DOCKER_REGISTRY_USERNAME }}
+          password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+
+      - name: Pull source images
+        run: |
+          docker pull ${{ env.BUILD_SOURCE_IMAGE }}; \
+          docker pull ${{ env.APP_SOURCE_IMAGE }}
+
+      - name: Build app image
+        run: |
+          cd ./repo/predictive && \
+          docker buildx build \
+          --target app-image \
+          --file Dockerfile \
+          --platform '${{ env.DOCKER_TARGET_PLATFORM_OS }}/${{ env.DOCKER_TARGET_PLATFORM_ARCHITECTURE }}' \
+          --build-arg APP_SOURCE_IMAGE='${{ env.APP_SOURCE_IMAGE }}' \
+          --build-arg BUILD_SOURCE_IMAGE='${{ env.BUILD_SOURCE_IMAGE }}' \
+          --build-arg COMMIT='${{ github.sha }}' \
+          --build-arg GITHUB_AUTH='${{ secrets.REQUIREMENTS_GITHUB_AUTH }}' \
+          --build-arg VERSION='${{ github.run_number }}' \
+          --tag ${{ env.DOCKER_REGISTRY_URL }}/${{ github.ref_name }}:latest-${{ env.DOCKER_TARGET_PLATFORM_ARCHITECTURE }} \
+          --push \
+          .
