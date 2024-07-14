@@ -4,13 +4,13 @@ ARG BUILD_SOURCE_IMAGE
 
 ## Layer 1
 FROM --platform=$TARGETPLATFORM $BUILD_SOURCE_IMAGE AS build-image
-RUN apt-get update && \
-    apt-get install -y curl && \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-    export PATH="$HOME/.cargo/bin:$PATH"
 
-RUN cd nordvpn && \
-    cargo build --release
+COPY src src
+#COPY Cargo.lock Cargo.lock
+COPY Cargo.toml Cargo.toml
+
+RUN cargo build --release
+
 
 ## Layer 2
 FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS app-image
@@ -26,8 +26,8 @@ RUN apt-get update && \
     apt-get remove -y wget nordvpn-release && \
     rm /tmp/nordrepo.deb
 
-COPY --from=build-image /nordvpn/target/release/nordvpn .
-
+COPY --from=build-image /target/release/nordvpn .
+COPY entrypoint.sh entrypoint.sh
 
 ARG VERSION
 ENV RSNORDVPN_VERSION=$VERSION
