@@ -6,7 +6,6 @@ ARG BUILD_SOURCE_IMAGE
 FROM --platform=$TARGETPLATFORM $BUILD_SOURCE_IMAGE AS build-image
 
 COPY src src
-#COPY Cargo.lock Cargo.lock
 COPY Cargo.toml Cargo.toml
 
 RUN cargo build --release
@@ -22,12 +21,11 @@ RUN apt-get update && \
     wget -O /tmp/nordrepo.deb https://repo.nordvpn.com/deb/nordvpn/debian/pool/main/nordvpn-release_1.0.0_all.deb && \
     apt-get install -y /tmp/nordrepo.deb && \
     apt-get update && \
-    apt-get install -y nordvpn=3.17.1 && \
+    apt-get install -y nordvpn=${NORDVPN_CLIENT_VERSION} && \
     apt-get remove -y wget nordvpn-release && \
     rm /tmp/nordrepo.deb
 
 COPY --from=build-image /target/release/nordvpn .
-COPY entrypoint.sh entrypoint.sh
 
 ARG VERSION
 ENV RSNORDVPN_VERSION=$VERSION

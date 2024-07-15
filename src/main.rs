@@ -3,9 +3,8 @@ use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
-use std::io::Write;
+use std::{io::Write, process::Command};
 use tokio_util::sync::CancellationToken;
-use tokio::sync::mpsc;
 
 mod nordvpn;
 mod proxy;
@@ -40,9 +39,29 @@ async fn main() {
 
     log::info!("Starting NordVPN...");
 
-    let nordvpn = nordvpn::NordVPN::new("sh".to_string(), args.token).unwrap();
+    let nordvpn_path_out = Command::new("which")
+        .arg("nordvpn")
+        .output()
+        .expect("Failed to execute command");
 
+    let nordvpn_path: String;
+    if nordvpn_path_out.status.success() {
+        nordvpn_path = std::str::from_utf8(&nordvpn_path_out.stdout).unwrap().trim().to_string();
+        log::info!("NordVPN found in path: {}", nordvpn_path);
+    } else {
+        log::error!("NordVPN not found in path");
+        std::process::exit(1);
+    }
+
+
+    let nordvpn = nordvpn::NordVPN::new(nordvpn_path, args.token).unwrap();
+    nordvpn.daemon_start(30);
+    std::thread::sleep(std::time::Duration::from_secs(10));
+    nordvpn.daemon_status();
+
+    log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
+    nordvpn.account();
     nordvpn.connect();
     nordvpn.status();
 
