@@ -25,7 +25,7 @@ impl NordVPN {
             .expect("Failed to execute command");
 
         if output.status.success() {
-            log::info!("Command executed successfully");
+            log::debug!("Command executed successfully");
             return (true, output.stdout);
         } else {
             log::error!("Command execution failed");

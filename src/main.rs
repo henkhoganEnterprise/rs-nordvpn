@@ -4,7 +4,8 @@ use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
 use std::io::Write;
-
+use tokio_util::sync::CancellationToken;
+use tokio::sync::mpsc;
 
 mod nordvpn;
 mod proxy;
@@ -20,10 +21,12 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() {
-
+    let args = CliArgs::parse();
+    
+    
     Builder::new()
-        .format(|buf, record| {
-            writeln!(buf,
+    .format(|buf, record| {
+        writeln!(buf,
                 "{} [{}] - {}",
                 Local::now().format("%Y-%m-%dT%H:%M:%S"),
                 record.level(),
@@ -33,8 +36,7 @@ async fn main() {
         .filter(None, LevelFilter::Info)
         .init();
 
-
-    let args = CliArgs::parse();
+    
 
     log::info!("Starting NordVPN...");
 
@@ -44,7 +46,68 @@ async fn main() {
     nordvpn.connect();
     nordvpn.status();
 
-    let proxy = proxy::Proxy::new();
+    let mut proxy = proxy::Proxy::new();
 
-    proxy.start().await;
+  
+
+    
+    // Step 1: Create a new CancellationToken
+    let token = CancellationToken::new();
+
+    // Step 2: Clone the token for use in another task
+    let cloned_token = token.clone();
+
+    // Task 1 - Wait for token cancellation or a long time
+    let proxy_task = tokio::spawn(async move {
+        tokio::select! {
+            // Step 3: Using cloned token to listen to cancellation requests
+            _ = cloned_token.cancelled() => {
+                // The token was cancelled, task can shut down
+            }
+            _ = proxy.start() => {
+                // Long work has completed
+            }
+        }
+    });
+
+    // Task 2 - Cancel the original token after a small delay
+    /*
+    tokio::spawn(async move {
+        
+        
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) => {}
+        }
+
+        // Step 4: Cancel the original or cloned token to notify other tasks about shutting down gracefully
+        log::info!("Shutting down gracefully...");
+        proxy.stop().await;
+        token.cancel();
+    });
+     */
+
+     use tokio::signal::unix::{signal, SignalKind};
+
+     // Infos here:
+     // https://www.gnu.org/software/libc/manual/html_node/Termination-Signals.html
+     let mut signal_terminate = signal(SignalKind::terminate()).unwrap();
+     let mut signal_interrupt = signal(SignalKind::interrupt()).unwrap();
+ 
+     tokio::select! {
+        _ = signal_terminate.recv() => {
+            log::info!("Received SIGTERM.");
+            proxy_task.abort();
+        },
+         _ = signal_interrupt.recv() => {
+            log::info!("Received SIGINT.");
+            proxy_task.abort();
+        }
+     };
+ 
+
+    // Wait for tasks to complete
+    proxy_task.await.unwrap();
+
+    
 }
