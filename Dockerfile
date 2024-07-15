@@ -41,4 +41,4 @@ LABEL org.opencontainers.image.vendor="Henkhogan"
 LABEL org.opencontainers.image.source="https://github.com/HenkhoganEnterprise/rs-nordvpn"
 
 EXPOSE 3128 3129
-ENTRYPOINT [ "sh", "entrypoint.sh"]
+ENTRYPOINT [ "./nordvpn" ]

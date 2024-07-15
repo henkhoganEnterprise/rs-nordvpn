@@ -47,9 +47,6 @@ async fn main() {
     nordvpn.status();
 
     let mut proxy = proxy::Proxy::new();
-
-  
-
     
     // Step 1: Create a new CancellationToken
     let token = CancellationToken::new();
@@ -63,6 +60,7 @@ async fn main() {
             // Step 3: Using cloned token to listen to cancellation requests
             _ = cloned_token.cancelled() => {
                 // The token was cancelled, task can shut down
+                log::info!("Proxy task was cancelled");
             }
             _ = proxy.start() => {
                 // Long work has completed
@@ -70,23 +68,7 @@ async fn main() {
         }
     });
 
-    // Task 2 - Cancel the original token after a small delay
-    /*
-    tokio::spawn(async move {
-        
-        
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {},
-            _ = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) => {}
-        }
-
-        // Step 4: Cancel the original or cloned token to notify other tasks about shutting down gracefully
-        log::info!("Shutting down gracefully...");
-        proxy.stop().await;
-        token.cancel();
-    });
-     */
-
+  
      use tokio::signal::unix::{signal, SignalKind};
 
      // Infos here:
@@ -97,11 +79,13 @@ async fn main() {
      tokio::select! {
         _ = signal_terminate.recv() => {
             log::info!("Received SIGTERM.");
-            proxy_task.abort();
+            token.cancel();
+            //proxy_task.abort();
         },
          _ = signal_interrupt.recv() => {
             log::info!("Received SIGINT.");
-            proxy_task.abort();
+            token.cancel();
+            //proxy_task.abort();
         }
      };
  
