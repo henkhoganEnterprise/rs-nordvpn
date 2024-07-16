@@ -104,6 +104,36 @@ impl NordVPN {
             .expect("Failed to execute command");
     }
 
+    pub fn set_analytics(&self, enabled: bool) -> bool {
+        let output = self._nordvpn_command(vec!["set".to_string(), "analytics".to_string(), enabled.to_string()]);
+        if output.0 {
+            log::info!("Analytics: {}", output.1);
+        } else {
+            log::error!("Failed to set analytics to {}: {}", enabled, output.1);
+        }
+        output.0
+    }
+
+    pub fn set_firewall(&self, enabled: bool) -> bool {
+        let output = self._nordvpn_command(vec!["set".to_string(), "firewall".to_string(), enabled.to_string()]);
+        if output.0 {
+            log::info!("Firewall: {}", output.1);
+        } else {
+            log::error!("Failed to set firewall to {}: {}", enabled, output.1);
+        }
+        output.0
+    }
+
+    pub fn set_routing(&self, enabled: bool) -> bool {
+        let output = self._nordvpn_command(vec!["set".to_string(), "routing".to_string(), enabled.to_string()]);
+        if output.0 {
+            log::info!("Routing: {}", output.1);
+        } else {
+            log::error!("Failed to set routing to {}: {}", enabled, output.1);
+        }
+        output.0
+    }
+
 
     pub fn status(&self) -> bool {
         log::debug!("Checking NordVPN status...");
@@ -121,6 +151,8 @@ impl NordVPN {
         let output = self._nordvpn_command(vec!["version".to_string()]);
         return output.1;
     }
+
+
 
 }
 

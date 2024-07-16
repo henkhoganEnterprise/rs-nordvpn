@@ -58,6 +58,9 @@ async fn main() {
     nordvpn.daemon_start(30);
     std::thread::sleep(std::time::Duration::from_secs(10));
     nordvpn.daemon_status();
+    nordvpn.set_analytics(false);
+    nordvpn.set_firewall(false);
+    nordvpn.set_routing(false);
 
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
