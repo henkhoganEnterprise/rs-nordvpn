@@ -532,10 +532,12 @@ dependencies = [
  "chrono",
  "clap",
  "env_logger",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "log",
+ "pin-project-lite",
  "tokio",
  "tokio-util",
 ]

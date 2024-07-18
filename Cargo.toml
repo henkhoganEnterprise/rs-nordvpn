@@ -7,9 +7,11 @@ edition = "2021"
 chrono = "0.4.38"
 clap = { version = "4.0", features = ["derive"] } 
 env_logger = "0.11.3"
+http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 log = "0.4.22"
+pin-project-lite = "*"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "*"

@@ -8,6 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 mod nordvpn;
 mod proxy;
+mod tokiort;
+
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -68,7 +70,6 @@ async fn main() {
     nordvpn.connect();
     nordvpn.status();
 
-    let mut proxy = proxy::Proxy::new();
     
     // Step 1: Create a new CancellationToken
     let token = CancellationToken::new();
@@ -84,7 +85,7 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = proxy.start() => {
+            _ = proxy::run(3128) => {
                 // Long work has completed
             }
         }
