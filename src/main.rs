@@ -6,6 +6,10 @@ use log::LevelFilter;
 use std::{io::Write, process::Command};
 use tokio_util::sync::CancellationToken;
 
+
+#[path = "./admin/mod.rs"]
+mod admin;
+#[path = "./nordvpn/mod.rs"]
 mod nordvpn;
 mod proxy;
 mod tokiort;
@@ -17,6 +21,10 @@ struct CliArgs {
     
     #[arg(short, long)]
     token: String,
+    #[clap(default_value_t = 80)]
+    admin_port: u16,
+    #[clap(default_value_t = 3128)]
+    proxy_port: u16,
 }
 
 
@@ -56,7 +64,13 @@ async fn main() {
     }
 
 
-    let nordvpn = nordvpn::NordVPN::new(nordvpn_path, args.token).unwrap();
+    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token) {
+        Ok(nordvpn) => nordvpn,
+        Err(err) => {
+            log::error!("Failed to create NordVPN instance: {}", err);
+            std::process::exit(1);
+        }
+    };
     nordvpn.daemon_start(30);
     std::thread::sleep(std::time::Duration::from_secs(10));
     nordvpn.daemon_status();
@@ -70,26 +84,50 @@ async fn main() {
     nordvpn.connect();
     nordvpn.status();
 
+    let _admin = match admin::Admin::new(nordvpn) {
+        Ok(_admin) => _admin,
+        Err(err) => {
+            log::error!("Failed to create NordAdminVPN instance: {}", err);
+            std::process::exit(1);
+        }
+    };
+
     
     // Step 1: Create a new CancellationToken
     let token = CancellationToken::new();
 
-    // Step 2: Clone the token for use in another task
-    let cloned_token = token.clone();
-
+    
     // Task 1 - Wait for token cancellation or a long time
-    let proxy_task = tokio::spawn(async move {
+    let admin_token = token.clone();
+    let admin_task = tokio::spawn(async move {
         tokio::select! {
             // Step 3: Using cloned token to listen to cancellation requests
-            _ = cloned_token.cancelled() => {
+            _ = admin_token.cancelled() => {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = proxy::run(3128) => {
+            _ = admin::run(args.admin_port, _admin) => {
                 // Long work has completed
             }
         }
     });
+
+    // Task 2 - Wait for token cancellation or a long time
+    let proxy_token = token.clone();
+    let proxy_task = tokio::spawn(async move {
+        tokio::select! {
+            // Step 3: Using cloned token to listen to cancellation requests
+            _ = proxy_token.cancelled() => {
+                // The token was cancelled, task can shut down
+                log::info!("Proxy task was cancelled");
+            }
+            _ = proxy::run(args.proxy_port) => {
+                // Long work has completed
+            }
+        }
+    });
+
+
 
   
      use tokio::signal::unix::{signal, SignalKind};
@@ -114,6 +152,7 @@ async fn main() {
  
 
     // Wait for tasks to complete
+    //admin_task.await.unwrap();
     proxy_task.await.unwrap();
 
     

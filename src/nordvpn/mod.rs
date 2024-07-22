@@ -3,9 +3,13 @@ use std::{io::stdout, process::Command};
 use clap::builder::Str;
 
 
+mod daemon;
+
+#[derive(Debug, Clone)]
 pub struct NordVPN {
     path: String,
     token: String,
+    daemon: daemon::Daemon
 }
 
 impl NordVPN {
@@ -13,7 +17,8 @@ impl NordVPN {
         log::info!("Creating new NordVPN instance");
         return Ok(Self {
             path,
-            token: token
+            token,
+            daemon: daemon::Daemon::new()?
         });
     }
 
@@ -58,6 +63,12 @@ impl NordVPN {
         return true;
     }
 
+    pub fn connect_with_argument(&self, argument: &str) -> bool {
+        log::debug!("Connecting to NordVPN...");
+        let output = self._nordvpn_command(vec!["connect".to_string(), argument.to_string()]);
+        return true;
+    }
+
     pub fn disconnect(&self) -> bool {
         log::debug!("Disconnecting from NordVPN...");
         let output = self._nordvpn_command(vec!["disconnect".to_string()]);
@@ -81,13 +92,16 @@ impl NordVPN {
     }
 
     pub fn daemon_status(&self) -> bool {
-        let stdout = Command::new("/etc/init.d/nordvpn")
-            .arg("status")
+        let cmd_output = self.daemon.status();
+        log::info!("NordVPN service status: {}", cmd_output.output.trim());
+        return cmd_output.status;
+    }
+
+    pub fn daemon_restart(&self, timeout: u8) {
+        Command::new("/etc/init.d/nordvpn")
+            .arg("restart")
             .output()
-            .expect("Failed to execute command")
-            .stdout;
-        log::info!("NordVPN service status: {}", String::from_utf8_lossy(&stdout).trim());
-        return true;
+            .expect("Failed to execute command");
     }
 
     pub fn daemon_start(&self, timeout: u8) {

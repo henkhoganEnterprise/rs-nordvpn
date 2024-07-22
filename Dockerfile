@@ -38,5 +38,5 @@ LABEL org.opencontainers.image.revision=$COMMIT
 LABEL org.opencontainers.image.vendor="Henkhogan"
 LABEL org.opencontainers.image.source="https://github.com/HenkhoganEnterprise/rs-nordvpn"
 
-EXPOSE 3128 3129
+EXPOSE 80 3128
 ENTRYPOINT [ "./nordvpn" ]
