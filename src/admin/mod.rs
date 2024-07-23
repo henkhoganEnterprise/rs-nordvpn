@@ -63,7 +63,7 @@ use crate::nordvpn;
 pub enum AdminRoutes {
     Account,
     Connect,
-    ConnectCountry,
+    ConnectWithArgument,
     Disconnect,
     Status,
     DaemonStatus,
@@ -86,7 +86,7 @@ impl Admin {
         router.add("/nordvpn/account", AdminRoutes::Account);
 
         router.add("/nordvpn/connect", AdminRoutes::Connect);
-        router.add("/nordvpn/connect/country/:ARGUMENT", AdminRoutes::ConnectCountry);
+        router.add("/nordvpn/connect/:ARGUMENT", AdminRoutes::ConnectWithArgument);
 
         router.add("/nordvpn/disconnect", AdminRoutes::Disconnect);
         router.add("/nordvpn/status", AdminRoutes::Status);
@@ -144,7 +144,7 @@ impl Service<Request<IncomingBody>> for Admin {
             (&Method::POST, AdminRoutes::Connect) => {
                 mk_response(format!("/nordvpn/connect: {:?}", self.nordvpn.connect()))
             },
-            (&Method::POST, AdminRoutes::ConnectCountry) => {
+            (&Method::POST, AdminRoutes::ConnectWithArgument) => {
                 //log::info!("path: {:?}", req.uri().path().to_string());
                 let argument = admin_route.params().find("ARGUMENT").unwrap();
                 log::info!("argument: {:?}", argument);

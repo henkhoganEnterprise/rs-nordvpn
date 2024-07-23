@@ -112,10 +112,9 @@ impl NordVPN {
         if output.0 {
             log::info!("Connected: {}", output.1);
             return Ok(self.parse_connect_output(output.1));
-        } else {
-            log::error!("Failed to connect: {}", output.1.clone());
-            return Err(());
-        }
+        } 
+        log::error!("Failed to connect: {}", output.1.clone());
+        return Err(());
     }
 
     pub fn connect_with_argument(&self, argument: &str) -> Result<NordVpnConnectOutput, ()> {
@@ -124,17 +123,16 @@ impl NordVPN {
         if output.0 {
             log::info!("Connected: {}", output.1);
             return Ok(self.parse_connect_output(output.1));
-        } else {
-            log::error!("Failed to connect: {}", output.1.clone());
-            return Err(());
-        }
+        } 
+        log::error!("Failed to connect: {}", output.1.clone());
+        return Err(());
     }
 
     pub fn disconnect(&self) -> bool {
         log::debug!("Disconnecting from NordVPN...");
         let output = self._nordvpn_command(vec!["disconnect".to_string()]);
         if output.0 {
-            log::info!("Connected: {}", output.1);
+            log::info!("Disonnected: {}", output.1);
         } else {
             log::error!("Failed to disconnect: {}", output.1);
         }
