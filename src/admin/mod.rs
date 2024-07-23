@@ -133,7 +133,7 @@ impl Service<Request<IncomingBody>> for Admin {
 
         let admin_route = match self.router.recognize(req.uri().path()) {
             Ok(binding) => binding,
-            Err(_) => return Box::pin(async { mk_response("oh no! not found".into()) }),
+            Err(_) => return Box::pin(async { mk_response("route not matched".into()) }),
         };
         //let admin_route_handler = admin_route.handler();
         
@@ -159,7 +159,7 @@ impl Service<Request<IncomingBody>> for Admin {
             (&Method::POST, AdminRoutes::DaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", self.nordvpn.daemon_stop())),
             
             _ => {
-                log::warn!("Not found: {:?}", req.uri().path());
+                log::warn!("Not found: {:?} {:?}", req.method(), req.uri().path());
                 mk_response("oh no! not found".into())
             }
         };
