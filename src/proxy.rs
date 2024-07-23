@@ -24,16 +24,16 @@ use tokio_util::bytes;
 // To try this example:
 // 1. cargo run --example http_proxy
 // 2. config http_proxy in command line
-//    $ export http_proxy=http://127.0.0.1:8100
-//    $ export https_proxy=http://127.0.0.1:8100
+//    $ export http_proxy=http://0.0.0.0:8100
+//    $ export https_proxy=http://0.0.0.0:8100
 // 3. send requests
 //    $ curl -i https://www.some_domain.com/
 
-pub async fn run(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+pub async fn run(bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    //let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    let listener = TcpListener::bind(addr).await?;
-    log::info!("Listening on http://{}", addr);
+    let listener = TcpListener::bind(bind_addr).await?;
+    log::info!("Listening on http://{}", bind_addr);
 
     loop {
         let (stream, _) = listener.accept().await?;

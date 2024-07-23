@@ -1,7 +1,17 @@
 use std::process::Command;
 
+use daemon::StatusOutput;
+
 
 mod daemon;
+
+#[derive(Debug, Clone)]
+pub struct NordVpnConnectOutput {
+    pub connected: bool,
+    pub group: String,
+    pub server_id: String,
+    pub server_fqdn: String
+}
 
 #[derive(Debug, Clone)]
 pub struct NordVPN {
@@ -55,16 +65,69 @@ impl NordVPN {
         output.0
     }
 
-    pub fn connect(&self) -> bool {
-        log::debug!("Connecting to NordVPN...");
-        let output = self._nordvpn_command(vec!["connect".to_string()]);
-        return true;
+    fn parse_connect_output(&self, output: String) -> NordVpnConnectOutput {
+        /*
+        Connecting to Australia #600 (au600.nordvpn.com)
+        You are connected to Australia #600 (au600.nordvpn.com)!
+         */
+        let connected;
+        let group: String;
+        let server_id: String;
+        let server_fqdn: String;
+        let substring = "You are connected to ";
+
+        let mut lines = output.lines();
+        let _first_line = lines.next().unwrap();
+        let second_line = lines.next().unwrap();
+        if second_line.contains(substring) {
+            connected = true;
+            let infos = second_line.split(substring).collect::<Vec<&str>>()[1];
+            let infos = infos.split(" ").collect::<Vec<&str>>();
+            group = infos[0].to_string();
+            server_id = infos[1].to_string();
+            server_fqdn= infos[2].replace("(", "").replace(")", "");
+
+        }
+        else {
+            connected = false;
+            group = "".to_string();
+            server_id = "".to_string();
+            server_fqdn = "".to_string();
+        }
+        
+        
+        return NordVpnConnectOutput {
+            connected,
+            group,
+            server_id,
+            server_fqdn
+        };
+    
+        
     }
 
-    pub fn connect_with_argument(&self, argument: &str) -> bool {
+    pub fn connect(&self) -> Result<NordVpnConnectOutput, ()> {
+        log::debug!("Connecting to NordVPN...");
+        let output = self._nordvpn_command(vec!["connect".to_string()]);
+        if output.0 {
+            log::info!("Connected: {}", output.1);
+            return Ok(self.parse_connect_output(output.1));
+        } else {
+            log::error!("Failed to connect: {}", output.1.clone());
+            return Err(());
+        }
+    }
+
+    pub fn connect_with_argument(&self, argument: &str) -> Result<NordVpnConnectOutput, ()> {
         log::debug!("Connecting to NordVPN...");
         let output = self._nordvpn_command(vec!["connect".to_string(), argument.to_string()]);
-        return true;
+        if output.0 {
+            log::info!("Connected: {}", output.1);
+            return Ok(self.parse_connect_output(output.1));
+        } else {
+            log::error!("Failed to connect: {}", output.1.clone());
+            return Err(());
+        }
     }
 
     pub fn disconnect(&self) -> bool {
@@ -89,24 +152,21 @@ impl NordVPN {
         output.0
     }
 
-    pub fn daemon_status(&self) -> bool {
+    pub fn daemon_status(&self) -> StatusOutput {
         let cmd_output = self.daemon.status();
-        log::info!("NordVPN service status: {}", cmd_output.output.trim());
-        return cmd_output.status;
+        log::info!("NordVPN service status: {:?}", cmd_output.status);
+        return cmd_output;
     }
 
-    pub fn daemon_restart(&self, timeout: u8) {
+    pub fn daemon_restart(&self, timeout: Option<u8>) {
         Command::new("/etc/init.d/nordvpn")
             .arg("restart")
             .output()
             .expect("Failed to execute command");
     }
 
-    pub fn daemon_start(&self, timeout: u8) {
-        Command::new("/etc/init.d/nordvpn")
-            .arg("start")
-            .output()
-            .expect("Failed to execute command");
+    pub fn daemon_start(&self, timeout: Option<u8>) {
+        let cmd_output = self.daemon.start(timeout);
     }
 
     pub fn daemon_stop(&self) {

@@ -3,8 +3,9 @@ use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
-use std::{io::Write, process::Command};
+use std::{io::Write, process::Command, str::FromStr};
 use tokio_util::sync::CancellationToken;
+use std::net::SocketAddr;
 
 
 #[path = "./admin/mod.rs"]
@@ -25,6 +26,8 @@ struct CliArgs {
     admin_port: u16,
     #[clap(default_value_t = 3128)]
     proxy_port: u16,
+    #[clap(default_value_t = String::from("0.0.0.0"))]
+    bind_ip: String
 }
 
 
@@ -71,8 +74,8 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    nordvpn.daemon_start(30);
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    nordvpn.daemon_start(Some(30));
+    //std::thread::sleep(std::t(im)e::Duration::from_secs(10));
     nordvpn.daemon_status();
     nordvpn.set_analytics(false);
     nordvpn.set_firewall(false);
@@ -99,6 +102,7 @@ async fn main() {
     
     // Task 1 - Wait for token cancellation or a long time
     let admin_token = token.clone();
+    let admin_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.admin_port)).unwrap();
     let admin_task = tokio::spawn(async move {
         tokio::select! {
             // Step 3: Using cloned token to listen to cancellation requests
@@ -106,7 +110,7 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = admin::run(args.admin_port, _admin) => {
+            _ = admin::run(admin_addr, _admin) => {
                 // Long work has completed
             }
         }
@@ -114,6 +118,7 @@ async fn main() {
 
     // Task 2 - Wait for token cancellation or a long time
     let proxy_token = token.clone();
+    let proxy_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.proxy_port)).unwrap();
     let proxy_task = tokio::spawn(async move {
         tokio::select! {
             // Step 3: Using cloned token to listen to cancellation requests
@@ -121,7 +126,7 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = proxy::run(args.proxy_port) => {
+            _ = proxy::run(proxy_addr) => {
                 // Long work has completed
             }
         }

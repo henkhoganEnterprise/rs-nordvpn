@@ -1,4 +1,6 @@
-use std::{io::stdout, process::Command};
+use core::time;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 
 
@@ -7,6 +9,22 @@ pub struct CommandOutput {
     pub output: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeamonStatus {
+    Unknown,
+    Running,
+    Stopped,
+    Stopping,
+    Starting,
+    Restarting,
+    Error,
+}
+
+pub struct StatusOutput {
+    pub status: DeamonStatus,
+    pub output: String,
+
+}
 
 #[derive(Debug, Clone)]
 pub struct Daemon {
@@ -48,16 +66,51 @@ impl Daemon {
         }
     }
 
-    pub fn status(&self) -> CommandOutput{
-        self.wrap_command("status")
+    pub fn status(&self) -> StatusOutput{
+        let cmd_output = self.wrap_command("status");
+        let status: DeamonStatus;
+        if cmd_output.output.contains("nordvpn is not running") {
+            status = DeamonStatus::Stopped;
+        }
+        else {
+            status = DeamonStatus::Unknown;
+        }
+        return StatusOutput {
+            status,
+            output: cmd_output.output,
+        };
     }
 
     pub fn restart(&self, timeout: u8) -> CommandOutput {
         self.wrap_command("restart")
     }
 
-    pub fn start(&self, timeout: u8) -> CommandOutput {
-        self.wrap_command("start")
+    pub fn start(&self, timeout: Option<u8>) -> CommandOutput {
+        let cmd_output = self.wrap_command("start");
+        if !timeout.is_none() {
+            let status = self.status();
+            if status.status != DeamonStatus::Running {
+                let current_time = || {
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Failed to get current time")
+                        .as_secs()
+                };
+    
+                let timeout_expiration = current_time() + u64::from(timeout.unwrap());
+                while current_time() < timeout_expiration {
+                    let status = self.status();
+                    if status.status == DeamonStatus::Running {
+                        break;
+                    } 
+                }
+
+            }
+        }
+        return CommandOutput {
+            status: cmd_output.status,
+            output: cmd_output.output,
+        };
     }
 
     pub fn stop(&self) -> CommandOutput {

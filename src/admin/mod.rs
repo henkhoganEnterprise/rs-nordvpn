@@ -22,11 +22,11 @@ mod support;
 use support::TokioIo;
 use tokio_util::bytes;
 
-pub async fn run(port: u16, admin: Admin) -> Result<(), Box<dyn std::error::Error>> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+pub async fn run(bind_addr: SocketAddr, admin: Admin) -> Result<(), Box<dyn std::error::Error>> {
+    //let bind_addr = SocketAddr::from_str((ip, port));
 
-    let listener = TcpListener::bind(addr).await?;
-    log::info!("Listening on http://{}", addr);
+    let listener = TcpListener::bind(bind_addr).await?;
+    log::info!("Listening on http://{}", bind_addr);
   
     loop {
         let (stream, _) = listener.accept().await?;
@@ -153,12 +153,15 @@ impl Service<Request<IncomingBody>> for Admin {
             (&Method::POST, AdminRoutes::Disconnect) => mk_response(format!("/nordvpn/disconnect: {:?}", self.nordvpn.disconnect())),
             (&Method::GET,  AdminRoutes::Status) => mk_response(format!("/nordvpn/status {:?}", self.nordvpn.status())),
 
-            (&Method::POST, AdminRoutes::DaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", self.nordvpn.daemon_restart(30))),
-            (&Method::GET,  AdminRoutes::DaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", self.nordvpn.daemon_status())),
-            (&Method::POST, AdminRoutes::DaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", self.nordvpn.daemon_start(30))),
+            (&Method::POST, AdminRoutes::DaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", self.nordvpn.daemon_restart(Some(30)))),
+            (&Method::GET,  AdminRoutes::DaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", self.nordvpn.daemon_status().output)),
+            (&Method::POST, AdminRoutes::DaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", self.nordvpn.daemon_start(Some(30)))),
             (&Method::POST, AdminRoutes::DaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", self.nordvpn.daemon_stop())),
             
-            _ => mk_response("oh no! not found".into()),
+            _ => {
+                log::warn!("Not found: {:?}", req.uri().path());
+                mk_response("oh no! not found".into())
+            }
         };
 
         Box::pin(async { res })
