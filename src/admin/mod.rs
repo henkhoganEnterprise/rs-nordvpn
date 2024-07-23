@@ -131,38 +131,33 @@ impl Service<Request<IncomingBody>> for Admin {
         }
 
 
-        let binding = match self.router.recognize(req.uri().path()) {
+        let admin_route = match self.router.recognize(req.uri().path()) {
             Ok(binding) => binding,
             Err(_) => return Box::pin(async { mk_response("oh no! not found".into()) }),
-        }
-        let admin_route = binding.handler();
+        };
+        //let admin_route_handler = admin_route.handler();
         
 
-        let res = match (req.method(), admin_route) {
+        let res = match (req.method(), admin_route.handler()) {
             
-            (&Method::GET, AdminRoutes::Account) => mk_response(format!("/nordvpn/account: {:?}", self.nordvpn.account())),
+            (&Method::GET,  AdminRoutes::Account) => mk_response(format!("/nordvpn/account: {:?}", self.nordvpn.account())),
             (&Method::POST, AdminRoutes::Connect) => {
                 mk_response(format!("/nordvpn/connect: {:?}", self.nordvpn.connect()))
             },
             (&Method::POST, AdminRoutes::ConnectCountry) => {
                 //log::info!("path: {:?}", req.uri().path().to_string());
-                let argument = binding.params().find("ARGUMENT").unwrap();
+                let argument = admin_route.params().find("ARGUMENT").unwrap();
                 log::info!("argument: {:?}", argument);
                 mk_response(format!("/nordvpn/connect: {:?}", self.nordvpn.connect_with_argument(argument)))
             },
             (&Method::POST, AdminRoutes::Disconnect) => mk_response(format!("/nordvpn/disconnect: {:?}", self.nordvpn.disconnect())),
-            (&Method::GET, AdminRoutes::Status) => mk_response(format!("/nordvpn/status {:?}", self.nordvpn.status())),
+            (&Method::GET,  AdminRoutes::Status) => mk_response(format!("/nordvpn/status {:?}", self.nordvpn.status())),
 
             (&Method::POST, AdminRoutes::DaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", self.nordvpn.daemon_restart(30))),
-            (&Method::GET, AdminRoutes::DaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", self.nordvpn.daemon_status())),
+            (&Method::GET,  AdminRoutes::DaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", self.nordvpn.daemon_status())),
             (&Method::POST, AdminRoutes::DaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", self.nordvpn.daemon_start(30))),
             (&Method::POST, AdminRoutes::DaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", self.nordvpn.daemon_stop())),
             
-            //"/posts" => mk_response(format!("posts, of course! counter = {:?}", self.counter)),
-            //"/authors" => mk_response(format!(
-            //    "authors extraordinare! counter = {:?}",
-            //    //self.counter
-            //)),
             _ => mk_response("oh no! not found".into()),
         };
 

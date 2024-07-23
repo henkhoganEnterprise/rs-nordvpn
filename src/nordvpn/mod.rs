@@ -1,6 +1,4 @@
-use std::{io::stdout, process::Command};
-
-use clap::builder::Str;
+use std::process::Command;
 
 
 mod daemon;

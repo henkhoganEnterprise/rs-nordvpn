@@ -152,8 +152,8 @@ async fn main() {
  
 
     // Wait for tasks to complete
-    //admin_task.await.unwrap();
     proxy_task.await.unwrap();
+    admin_task.await.unwrap();
 
     
 }
