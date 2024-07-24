@@ -15,7 +15,7 @@ RUN cargo build --release
 FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS app-image
 WORKDIR /app
 
-ARG NORDVPN_CLIENT_VERSION=3.18.2
+ARG NORDVPN_CLIENT_VERSION=3.18.3
 RUN apt-get update && \
     apt-get install -y wget iputils-ping curl && \
     wget -O /tmp/nordrepo.deb https://repo.nordvpn.com/deb/nordvpn/debian/pool/main/nordvpn-release_1.0.0_all.deb && \
