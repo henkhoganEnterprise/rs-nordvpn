@@ -61,15 +61,16 @@ use crate::nordvpn;
 
 #[derive(Debug, Clone)]
 pub enum AdminRoutes {
-    Account,
-    Connect,
-    ConnectWithArgument,
-    Disconnect,
-    Status,
-    DaemonStatus,
-    DaemonRestart,
-    DaemonStart,
-    DaemonStop
+    AdminRotation,
+    NordvpnAccount,
+    NordvpnConnect,
+    NordvpnConnectWithArgument,
+    NordvpnDisconnect,
+    NordvpnStatus,
+    NordvpnDaemonStatus,
+    NordvpnDaemonRestart,
+    NordvpnDaemonStart,
+    NordvpnDaemonStop
 }
 
 #[derive(Debug, Clone)]
@@ -81,24 +82,37 @@ pub struct Admin {
 
 impl Admin {
     pub fn new(nordvpn: nordvpn::NordVPN) -> Result<Self, &'static str> {
+
         log::info!("Creating new Admin instance");
         let mut router: Router<AdminRoutes> = Router::new();
-        router.add("/nordvpn/account", AdminRoutes::Account);
 
-        router.add("/nordvpn/connect", AdminRoutes::Connect);
-        router.add("/nordvpn/connect/:ARGUMENT", AdminRoutes::ConnectWithArgument);
+        router.add("/admin/rotation/:TYPE/:VALUE", AdminRoutes::AdminRotation);
+        router.add("/nordvpn/account", AdminRoutes::NordvpnAccount);
 
-        router.add("/nordvpn/disconnect", AdminRoutes::Disconnect);
-        router.add("/nordvpn/status", AdminRoutes::Status);
+        router.add("/nordvpn/connect", AdminRoutes::NordvpnConnect);
+        router.add("/nordvpn/connect/:ARGUMENT", AdminRoutes::NordvpnConnectWithArgument);
 
-        router.add("/nordvpn/daemon/status", AdminRoutes::DaemonStatus);
-        router.add("/nordvpn/daemon/restart", AdminRoutes::DaemonRestart);
-        router.add("/nordvpn/daemon/start", AdminRoutes::DaemonStart);
-        router.add("/nordvpn/daemon/stop", AdminRoutes::DaemonStop);
+        router.add("/nordvpn/disconnect", AdminRoutes::NordvpnDisconnect);
+        router.add("/nordvpn/status", AdminRoutes::NordvpnStatus);
+
+        router.add("/nordvpn/daemon/status", AdminRoutes::NordvpnDaemonStatus);
+        router.add("/nordvpn/daemon/restart", AdminRoutes::NordvpnDaemonRestart);
+        router.add("/nordvpn/daemon/start", AdminRoutes::NordvpnDaemonStart);
+        router.add("/nordvpn/daemon/stop", AdminRoutes::NordvpnDaemonStop);
         return Ok(Self {
             nordvpn,
             router
         });
+    }
+
+    pub fn get_rotation(&self) -> String {
+        log::debug!("Getting rotation...");
+        return "rotation".to_string();
+    }
+
+    pub fn set_rotation_from_str(&self, rotation_type: &str, rotation_value: &str) -> String {
+        log::debug!("Setting rotation to type: {:?}, value: {:?}", rotation_type, rotation_value);
+        return "rotation".to_string();
     }
 
     //pub fn get_status(&self) -> bool {
@@ -130,8 +144,8 @@ impl Service<Request<IncomingBody>> for Admin {
             Ok(Response::builder().body(Full::new(Bytes::from(s))).unwrap())
         }
 
-
-        let admin_route = match self.router.recognize(req.uri().path()) {
+        let path = req.uri().path();
+        let admin_route = match self.router.recognize(path) {
             Ok(binding) => binding,
             Err(_) => return Box::pin(async { mk_response("route not matched".into()) }),
         };
@@ -139,24 +153,44 @@ impl Service<Request<IncomingBody>> for Admin {
         
 
         let res = match (req.method(), admin_route.handler()) {
-            
-            (&Method::GET,  AdminRoutes::Account) => mk_response(format!("/nordvpn/account: {:?}", self.nordvpn.account())),
-            (&Method::POST, AdminRoutes::Connect) => {
-                mk_response(format!("/nordvpn/connect: {:?}", self.nordvpn.connect()))
+
+            (&Method::GET,  AdminRoutes::AdminRotation) => mk_response(self.get_rotation()),
+            (&Method::POST,  AdminRoutes::AdminRotation) => {
+                let _type = admin_route.params().find("TYPE").unwrap();
+                let _value = admin_route.params().find("VALUE").unwrap();
+                log::info!("_type: {:?},  value: {:?}", _type, _value);
+                mk_response(self.set_rotation_from_str(_type, _value))
             },
-            (&Method::POST, AdminRoutes::ConnectWithArgument) => {
-                //log::info!("path: {:?}", req.uri().path().to_string());
+            
+            
+            (&Method::GET,  AdminRoutes::NordvpnAccount) => mk_response(format!("{}: {:?}", path, self.nordvpn.account())),
+            (&Method::POST, AdminRoutes::NordvpnConnect) => {
+                mk_response(serde_json::to_string(&self.nordvpn.connect()).unwrap())
+            },
+            (&Method::POST, AdminRoutes::NordvpnConnectWithArgument) => {
                 let argument = admin_route.params().find("ARGUMENT").unwrap();
                 log::info!("argument: {:?}", argument);
-                mk_response(format!("/nordvpn/connect: {:?}", self.nordvpn.connect_with_argument(argument)))
-            },
-            (&Method::POST, AdminRoutes::Disconnect) => mk_response(format!("/nordvpn/disconnect: {:?}", self.nordvpn.disconnect())),
-            (&Method::GET,  AdminRoutes::Status) => mk_response(format!("/nordvpn/status {:?}", self.nordvpn.status())),
+                let output = match self.nordvpn.connect_with_argument(argument) {
+                    Ok(output) => {
+                        log::info!("Connected with argument: {:?}", argument);
+                        mk_response(serde_json::to_string(&output).unwrap())
 
-            (&Method::POST, AdminRoutes::DaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", self.nordvpn.daemon_restart(Some(30)))),
-            (&Method::GET,  AdminRoutes::DaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", self.nordvpn.daemon_status().output)),
-            (&Method::POST, AdminRoutes::DaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", self.nordvpn.daemon_start(Some(30)))),
-            (&Method::POST, AdminRoutes::DaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", self.nordvpn.daemon_stop())),
+                    },
+                    Err(e) => {
+                        log::error!("Failed to connect with argument: {:?}", argument);
+                        mk_response(format!("Failed to connect with argument: {:?}", e))
+                    }
+                };
+                output
+            },
+
+            (&Method::POST, AdminRoutes::NordvpnDisconnect) => mk_response(format!("/nordvpn/disconnect: {:?}", self.nordvpn.disconnect())),
+            (&Method::GET,  AdminRoutes::NordvpnStatus) => mk_response(serde_json::to_string(&self.nordvpn.status()).unwrap()),
+
+            (&Method::POST, AdminRoutes::NordvpnDaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", self.nordvpn.daemon_restart(Some(30)))),
+            (&Method::GET,  AdminRoutes::NordvpnDaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", self.nordvpn.daemon_status().output)),
+            (&Method::POST, AdminRoutes::NordvpnDaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", self.nordvpn.daemon_start(Some(30)))),
+            (&Method::POST, AdminRoutes::NordvpnDaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", self.nordvpn.daemon_stop())),
             
             _ => {
                 log::warn!("Not found: {:?} {:?}", req.method(), req.uri().path());

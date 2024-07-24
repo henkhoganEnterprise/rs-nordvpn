@@ -1,17 +1,33 @@
 use std::process::Command;
 
 use daemon::StatusOutput;
+use serde_derive::{Deserialize, Serialize};
 
 
 mod daemon;
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct NordVpnConnectOutput {
     pub connected: bool,
     pub group: String,
     pub server_id: String,
     pub server_fqdn: String
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct NordVpnStatusOutput {
+    pub connected: bool,
+    pub server: String,
+    pub hostname: String,
+    pub ip: String,
+    pub country: String,
+    pub city: String,
+    pub technology: String,
+    pub protocol: String,
+    pub transfer: String,
+    pub uptime: String
+}
+
 
 #[derive(Debug, Clone)]
 pub struct NordVPN {
@@ -85,7 +101,7 @@ impl NordVPN {
             let infos = infos.split(" ").collect::<Vec<&str>>();
             group = infos[0].to_string();
             server_id = infos[1].to_string();
-            server_fqdn= infos[2].replace("(", "").replace(")", "");
+            server_fqdn= infos[2].replace("(", "").replace(")!", "");
 
         }
         else {
@@ -204,16 +220,94 @@ impl NordVPN {
         output.0
     }
 
+    fn parse_status_output(&self, output: String) -> NordVpnStatusOutput {
+        /*        
+        Status: Connected
+        Server: Germany #1099
+        Hostname: de1099.nordvpn.com
+        IP: 194.233.96.241
+        Country: Germany
+        City: Berlin
+        Current technology: NORDLYNX
+        Current protocol: UDP
+        Transfer: 92 B received, 180 B sent
+        Uptime: 0 seconds
+        */
+        let mut connected = false;
+        let mut server = String::new();
+        let mut hostname = String::new();
+        let mut ip = String::new();
+        let mut country = String::new();
+        let mut city = String::new();
+        let mut technology = String::new();
+        let mut protocol = String::new();
+        let mut transfer = String::new();
+        let mut uptime = String::new();
 
-    pub fn status(&self) -> bool {
+        for line in output.lines() {
+            if line.starts_with("Status") {
+                if line.contains("Connected") {
+                    connected = true;
+                } else {
+                    connected = false;
+                }
+            } else if line.starts_with("Server: ") {
+                server = line.replace("Server: ", "").to_string();
+            } else if line.starts_with("Hostname: ") {
+                hostname = line.replace("Hostname: ", "").to_string();
+            } else if line.starts_with("IP: ") {
+                ip = line.replace("IP: ", "").to_string();
+            } else if line.starts_with("Country: ") {
+                country = line.replace("Country: ", "").to_string();
+            } else if line.starts_with("City: ") {
+                city = line.replace("City: ", "").to_string();
+            } else if line.starts_with("Current technology: ") {
+                technology = line.replace("Current technology: ", "").to_string();
+            } else if line.starts_with("Current protocol: ") {
+                protocol = line.replace("Current protocol: ", "").to_string();
+            } else if line.starts_with("Transfer: ") {
+                transfer = line.replace("Transfer: ", "").to_string();
+            } else if line.starts_with("Uptime: ") {
+                uptime = line.replace("Uptime: ", "").to_string();
+            }
+        }
+
+        return NordVpnStatusOutput {
+            connected,
+            server,
+            hostname,
+            ip,
+            country,
+            city,
+            technology,
+            protocol,
+            transfer,
+            uptime,
+        };
+    }
+
+
+    pub fn status(&self) -> NordVpnStatusOutput {
         log::debug!("Checking NordVPN status...");
         let output = self._nordvpn_command(vec!["status".to_string()]);
         if output.0 {
-            log::info!("Status: {}", output.1);
-        } else {
-            log::error!("Failed to fetch status: {}", output.1);
+            log::info!("{}", output.1);
+            return self.parse_status_output(output.1);
         }
-        output.0
+        
+        log::error!("Failed to fetch status: {}", output.1);
+        return NordVpnStatusOutput {
+            connected: false,
+            server: "".to_string(),
+            hostname: "".to_string(),
+            ip: "".to_string(),
+            country: "".to_string(),
+            city: "".to_string(),
+            technology: "".to_string(),
+            protocol: "".to_string(),
+            transfer: "".to_string(),
+            uptime: "".to_string(),
+        };
     }
 
     pub fn version(&self) -> String {

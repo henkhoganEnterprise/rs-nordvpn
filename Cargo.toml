@@ -14,5 +14,8 @@ hyper-util = { version = "0.1", features = ["full"] }
 log = "0.4.22"
 pin-project-lite = "*"
 route-recognizer = "0.3.1"
+serde = { version = "1.0.120", features = ["default"] }
+serde_derive = "1.0"
+serde_json = { version = "1.0.120", features = ["default"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "*"
