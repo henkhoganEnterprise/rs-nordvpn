@@ -33,11 +33,12 @@ pub async fn run(bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>
     //let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     let listener = TcpListener::bind(bind_addr).await?;
-    log::info!("Listening on http://{}", bind_addr);
+    log::info!("Proxy Listening on http://{}", bind_addr);
 
     loop {
         let (stream, _) = listener.accept().await?;
-        log::info!("Accepted a new TCP connection from: {}", stream.peer_addr()?);
+        let peer_addr = stream.peer_addr()?;
+        log::info!("Proxy accepted a new TCP connection from: {}", peer_addr);
         let io = TokioIo::new(stream);
 
         tokio::task::spawn(async move {
@@ -51,6 +52,7 @@ pub async fn run(bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>
                 log::error!("Failed to serve connection: {:?}", err);
             }
         });
+        log::info!("Proxy connection closed from {}", peer_addr);
     }
 }
 

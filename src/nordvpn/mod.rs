@@ -48,7 +48,7 @@ impl NordVPN {
 
     fn _nordvpn_command(&self, args: Vec<String>) -> (bool, String) {
 
-        let mut _cmd = Command::new(self.path.clone());
+        let mut _cmd: Command = Command::new(self.path.clone());
 
         _cmd
             .args(args);
@@ -82,35 +82,46 @@ impl NordVPN {
     }
 
     fn parse_connect_output(&self, output: String) -> NordVpnConnectOutput {
+
         /*
         Connecting to Australia #600 (au600.nordvpn.com)
         You are connected to Australia #600 (au600.nordvpn.com)!
          */
+        let connected_substring = "You are connected to ";
+        /*
+        Connecting to Germany #1087 (de1087.nordvpn.com)
+        The VPN connection has failed. Please check your internet connection and try connecting to the VPN again. If the issue persists, contact our customer support.
+        */
+        let not_connected_substring = "The VPN connection has failed. Please check your internet connection and try connecting to the VPN again. If the issue persists, contact our customer support.";
+        
         let connected;
         let group: String;
         let server_id: String;
         let server_fqdn: String;
-        let substring = "You are connected to ";
 
         let mut lines = output.lines();
         let _first_line = lines.next().unwrap();
         let second_line = lines.next().unwrap();
-        if second_line.contains(substring) {
+
+        if second_line.contains(connected_substring) {
             connected = true;
-            let infos = second_line.split(substring).collect::<Vec<&str>>()[1];
+            let infos = second_line.split(connected_substring).collect::<Vec<&str>>()[1];
             let infos = infos.split(" ").collect::<Vec<&str>>();
             group = infos[0].to_string();
             server_id = infos[1].to_string();
             server_fqdn= infos[2].replace("(", "").replace(")!", "");
-
         }
+        
         else {
             connected = false;
             group = "".to_string();
             server_id = "".to_string();
             server_fqdn = "".to_string();
         }
-        
+
+        if !second_line.contains(not_connected_substring) {
+            log::warn!("Failed to parse connect output: {} -> assuming disconnected", output);
+        }
         
         return NordVpnConnectOutput {
             connected,
@@ -190,6 +201,17 @@ impl NordVPN {
             .expect("Failed to execute command");
     }
 
+    pub fn logs(&self, lines: u16) -> Vec<u8> {
+        log::debug!("Checking NordVPN logs...");
+        return Command::new("tail")
+            .arg("-n")
+            .arg(lines.to_string()) 
+            .arg("/var/log/nordvpn/daemon.log")
+            .output()
+            .expect("Failed to execute command")
+            .stdout
+    }
+
     pub fn set_analytics(&self, enabled: bool) -> bool {
         let output = self._nordvpn_command(vec!["set".to_string(), "analytics".to_string(), enabled.to_string()]);
         if output.0 {
@@ -216,6 +238,26 @@ impl NordVPN {
             log::info!("Routing: {}", output.1);
         } else {
             log::error!("Failed to set routing to {}: {}", enabled, output.1);
+        }
+        output.0
+    }
+
+    pub fn set_tray(&self, enabled: bool) -> bool {
+        let output = self._nordvpn_command(vec!["set".to_string(), "tray".to_string(), enabled.to_string()]);
+        if output.0 {
+            log::info!("Tray: {}", output.1);
+        } else {
+            log::error!("Failed to set tray to {}: {}", enabled, output.1);
+        }
+        output.0
+    }
+
+    pub fn set_virtual_location(&self, enabled: bool) -> bool {
+        let output = self._nordvpn_command(vec!["set".to_string(), "virtual-location".to_string(), enabled.to_string()]);
+        if output.0 {
+            log::info!("Location: {}", output.1);
+        } else {
+            log::error!("Failed to set virtual-location to {}: {}", enabled, output.1);
         }
         output.0
     }

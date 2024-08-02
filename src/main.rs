@@ -3,7 +3,7 @@ use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
-use std::{io::Write, process::Command, str::FromStr};
+use std::{io::Write, process::Command, str::FromStr, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use std::net::SocketAddr;
 
@@ -80,11 +80,13 @@ async fn main() {
     nordvpn.set_analytics(false);
     nordvpn.set_firewall(false);
     nordvpn.set_routing(false);
+    nordvpn.set_tray(false);
+    nordvpn.set_virtual_location(false);
 
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
     nordvpn.account();
-    nordvpn.connect();
+    nordvpn.connect().unwrap();
     nordvpn.status();
 
     let _admin = match admin::Admin::new(nordvpn) {
@@ -110,7 +112,7 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = admin::run(admin_addr, _admin) => {
+            _ = admin::run(admin_addr, Arc::new(_admin)) => {
                 // Long work has completed
             }
         }

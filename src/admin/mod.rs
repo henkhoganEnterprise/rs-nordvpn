@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use bytes::Bytes;
 //use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -22,20 +23,21 @@ mod support;
 use support::TokioIo;
 use tokio_util::bytes;
 
-pub async fn run(bind_addr: SocketAddr, admin: Admin) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(bind_addr: SocketAddr, admin: Arc<Admin>) -> Result<(), Box<dyn std::error::Error>> {
     //let bind_addr = SocketAddr::from_str((ip, port));
 
     let listener = TcpListener::bind(bind_addr).await?;
-    log::info!("Listening on http://{}", bind_addr);
+    log::info!("Admin istening on http://{}", bind_addr);
+
   
     loop {
         let (stream, _) = listener.accept().await?;
-        log::info!("Accepted a new TCP connection from: {}", stream.peer_addr()?);
+        log::info!("Admin accepted a new TCP connection from: {}", stream.peer_addr()?);
         let io = TokioIo::new(stream);
-        let admin_clone = admin.clone();
+        let x = admin.clone();
 
         tokio::task::spawn(async move {
-            if let Err(err) = http1::Builder::new().serve_connection(io, admin_clone).await {
+            if let Err(err) = http1::Builder::new().serve_connection(io, x).await {
                 println!("Failed to serve connection: {:?}", err);
             }
         });
@@ -66,6 +68,8 @@ pub enum AdminRoutes {
     NordvpnConnect,
     NordvpnConnectWithArgument,
     NordvpnDisconnect,
+    NordvpnLogs,
+    NordvpnLogsWithArgument,
     NordvpnStatus,
     NordvpnDaemonStatus,
     NordvpnDaemonRestart,
@@ -79,29 +83,37 @@ pub struct Admin {
     router: Router<AdminRoutes>
 }
 
+pub fn router() -> Router<AdminRoutes> {
+    let mut router: Router<AdminRoutes> = Router::new();
+
+    router.add("/admin/rotation/:TYPE/:VALUE", AdminRoutes::AdminRotation);
+    router.add("/nordvpn/account", AdminRoutes::NordvpnAccount);
+
+    router.add("/nordvpn/connect", AdminRoutes::NordvpnConnect);
+    router.add("/nordvpn/connect/:ARGUMENT", AdminRoutes::NordvpnConnectWithArgument);
+
+    router.add("/nordvpn/disconnect", AdminRoutes::NordvpnDisconnect);
+    router.add("/nordvpn/logs", AdminRoutes::NordvpnLogs);
+    router.add("/nordvpn/logs/:LINES", AdminRoutes::NordvpnLogsWithArgument);
+    router.add("/nordvpn/status", AdminRoutes::NordvpnStatus);
+
+    router.add("/nordvpn/daemon/status", AdminRoutes::NordvpnDaemonStatus);
+    router.add("/nordvpn/daemon/restart", AdminRoutes::NordvpnDaemonRestart);
+    router.add("/nordvpn/daemon/start", AdminRoutes::NordvpnDaemonStart);
+    router.add("/nordvpn/daemon/stop", AdminRoutes::NordvpnDaemonStop);
+
+    return router;
+}
+
 
 impl Admin {
     pub fn new(nordvpn: nordvpn::NordVPN) -> Result<Self, &'static str> {
 
         log::info!("Creating new Admin instance");
-        let mut router: Router<AdminRoutes> = Router::new();
 
-        router.add("/admin/rotation/:TYPE/:VALUE", AdminRoutes::AdminRotation);
-        router.add("/nordvpn/account", AdminRoutes::NordvpnAccount);
-
-        router.add("/nordvpn/connect", AdminRoutes::NordvpnConnect);
-        router.add("/nordvpn/connect/:ARGUMENT", AdminRoutes::NordvpnConnectWithArgument);
-
-        router.add("/nordvpn/disconnect", AdminRoutes::NordvpnDisconnect);
-        router.add("/nordvpn/status", AdminRoutes::NordvpnStatus);
-
-        router.add("/nordvpn/daemon/status", AdminRoutes::NordvpnDaemonStatus);
-        router.add("/nordvpn/daemon/restart", AdminRoutes::NordvpnDaemonRestart);
-        router.add("/nordvpn/daemon/start", AdminRoutes::NordvpnDaemonStart);
-        router.add("/nordvpn/daemon/stop", AdminRoutes::NordvpnDaemonStop);
         return Ok(Self {
             nordvpn,
-            router
+            router: router()
         });
     }
 
@@ -132,7 +144,6 @@ impl Admin {
         return ();
     } */
 }
-
 
 impl Service<Request<IncomingBody>> for Admin {
     type Response = Response<Full<Bytes>>;
@@ -185,6 +196,12 @@ impl Service<Request<IncomingBody>> for Admin {
             },
 
             (&Method::POST, AdminRoutes::NordvpnDisconnect) => mk_response(format!("/nordvpn/disconnect: {:?}", self.nordvpn.disconnect())),
+            (&Method::GET,  AdminRoutes::NordvpnLogs) => mk_response(serde_json::to_string(&self.nordvpn.logs(10)).unwrap()),
+            (&Method::GET,  AdminRoutes::NordvpnLogsWithArgument) => {
+                let argument = admin_route.params().find("LINES").unwrap();
+                log::info!("argument: {:?}", argument);
+                mk_response(serde_json::to_string(&self.nordvpn.logs(argument.parse().unwrap())).unwrap())
+            },
             (&Method::GET,  AdminRoutes::NordvpnStatus) => mk_response(serde_json::to_string(&self.nordvpn.status()).unwrap()),
 
             (&Method::POST, AdminRoutes::NordvpnDaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", self.nordvpn.daemon_restart(Some(30)))),
