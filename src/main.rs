@@ -3,7 +3,7 @@ use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
-use std::{io::Write, process::Command, str::FromStr, sync::Arc};
+use std::{io::Write, process::Command, str::FromStr, sync::{Arc, Mutex}, vec};
 use tokio_util::sync::CancellationToken;
 use std::net::SocketAddr;
 
@@ -12,7 +12,13 @@ use std::net::SocketAddr;
 mod admin;
 #[path = "./nordvpn/mod.rs"]
 mod nordvpn;
+
+#[path = "./helper/mod.rs"]
+mod helper;
+use helper::CurlClient;
+
 mod proxy;
+use proxy::ProxyState;
 mod tokiort;
 
 
@@ -22,17 +28,24 @@ struct CliArgs {
     
     #[arg(short, long)]
     token: String,
+    #[arg(short, long)]
     #[clap(default_value_t = 80)]
     admin_port: u16,
+    #[arg(short, long)]
     #[clap(default_value_t = 3128)]
     proxy_port: u16,
+    #[arg(short, long)]
     #[clap(default_value_t = String::from("0.0.0.0"))]
-    bind_ip: String
+    bind_ip: String,
+    #[arg(short, long)]
+    #[clap(default_values_t = Vec::<String>::new())]
+    monitored_hosts: Vec<String>
 }
 
 
 #[tokio::main]
 async fn main() {
+    
     let args = CliArgs::parse();
     
     
@@ -49,6 +62,9 @@ async fn main() {
         .init();
 
     
+
+    let curl_client = CurlClient::new_with_path_discovery();
+    log::info!("Native Public IP: {}", curl_client.get("https://api.ipify.org").unwrap());
 
     log::info!("Starting NordVPN...");
 
@@ -67,7 +83,7 @@ async fn main() {
     }
 
 
-    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token) {
+    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token.clone()) {
         Ok(nordvpn) => nordvpn,
         Err(err) => {
             log::error!("Failed to create NordVPN instance: {}", err);
@@ -75,21 +91,32 @@ async fn main() {
         }
     };
     nordvpn.daemon_start(Some(30));
-    //std::thread::sleep(std::t(im)e::Duration::from_secs(10));
     nordvpn.daemon_status();
     nordvpn.set_analytics(false);
-    nordvpn.set_firewall(false);
-    nordvpn.set_routing(false);
-    nordvpn.set_tray(false);
-    nordvpn.set_virtual_location(false);
+    nordvpn.set_firewall(true);
+    nordvpn.set_routing(true);
+    nordvpn.set_lan_discovery(true);
+    //nordvpn.set_tray(false);
+    //nordvpn.set_virtual_location(false);
 
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
     nordvpn.account();
     nordvpn.connect().unwrap();
     nordvpn.status();
+    log::info!("Public IP: {}", curl_client.get("https://api.ipify.org").unwrap());
 
-    let _admin = match admin::Admin::new(nordvpn) {
+
+    let proxy_state = ProxyState::new(args.monitored_hosts);
+    let proxy_state_mutex = Mutex::new(proxy_state);
+    let proxy_state_mutex_arc = Arc::new(proxy_state_mutex);
+    
+
+   
+
+
+    
+    let _admin = match admin::Admin::new(curl_client, nordvpn, proxy_state_mutex_arc.clone()) {
         Ok(_admin) => _admin,
         Err(err) => {
             log::error!("Failed to create NordAdminVPN instance: {}", err);
@@ -97,7 +124,6 @@ async fn main() {
         }
     };
 
-    
     // Step 1: Create a new CancellationToken
     let token = CancellationToken::new();
 
@@ -128,7 +154,7 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = proxy::run(proxy_addr) => {
+            _ = proxy::run(proxy_state_mutex_arc.clone(),proxy_addr) => {
                 // Long work has completed
             }
         }

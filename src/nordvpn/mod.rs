@@ -232,6 +232,16 @@ impl NordVPN {
         output.0
     }
 
+    pub fn set_lan_discovery(&self, enabled: bool) -> bool {
+        let output = self._nordvpn_command(vec!["set".to_string(), "lan-discovery".to_string(), enabled.to_string()]);
+        if output.0 {
+            log::info!("LAN Discovery: {}", output.1);
+        } else {
+            log::error!("Failed to set lan-discovery to {}: {}", enabled, output.1);
+        }
+        output.0
+    }
+
     pub fn set_routing(&self, enabled: bool) -> bool {
         let output = self._nordvpn_command(vec!["set".to_string(), "routing".to_string(), enabled.to_string()]);
         if output.0 {

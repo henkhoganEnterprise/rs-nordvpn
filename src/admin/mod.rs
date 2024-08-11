@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 //use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -16,12 +16,17 @@ use hyper::service::Service;
 
 use route_recognizer::Router;
 
+//#[path = "../helper/mod.rs"]
+//mod helper;
+use helper::CurlClient;
 
 
 #[path = "../benches/support/mod.rs"]
 mod support;
 use support::TokioIo;
 use tokio_util::bytes;
+
+const IP_URL: &str = "https://api.ipify.org";
 
 pub async fn run(bind_addr: SocketAddr, admin: Arc<Admin>) -> Result<(), Box<dyn std::error::Error>> {
     //let bind_addr = SocketAddr::from_str((ip, port));
@@ -59,11 +64,13 @@ fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
 
 
 
-use crate::nordvpn;
+use crate::{helper, nordvpn, proxy};
 
 #[derive(Debug, Clone)]
 pub enum AdminRoutes {
     AdminRotation,
+    IpLocal,
+    IpPublic,
     NordvpnAccount,
     NordvpnConnect,
     NordvpnConnectWithArgument,
@@ -74,12 +81,17 @@ pub enum AdminRoutes {
     NordvpnDaemonStatus,
     NordvpnDaemonRestart,
     NordvpnDaemonStart,
-    NordvpnDaemonStop
+    NordvpnDaemonStop,
+    ProxyStatus,
+    ProxyStatusCompact,
+    ProxyStatusPurge,
 }
 
 #[derive(Debug, Clone)]
 pub struct Admin {
+    curl_client: CurlClient,
     nordvpn: nordvpn::NordVPN,
+    proxy: Arc<Mutex<proxy::ProxyState>>,
     router: Router<AdminRoutes>
 }
 
@@ -87,6 +99,10 @@ pub fn router() -> Router<AdminRoutes> {
     let mut router: Router<AdminRoutes> = Router::new();
 
     router.add("/admin/rotation/:TYPE/:VALUE", AdminRoutes::AdminRotation);
+
+    router.add("/ip/local", AdminRoutes::IpLocal);
+    router.add("/ip/public", AdminRoutes::IpPublic);
+
     router.add("/nordvpn/account", AdminRoutes::NordvpnAccount);
 
     router.add("/nordvpn/connect", AdminRoutes::NordvpnConnect);
@@ -102,17 +118,23 @@ pub fn router() -> Router<AdminRoutes> {
     router.add("/nordvpn/daemon/start", AdminRoutes::NordvpnDaemonStart);
     router.add("/nordvpn/daemon/stop", AdminRoutes::NordvpnDaemonStop);
 
+    router.add("/proxy/status", AdminRoutes::ProxyStatus);
+    router.add("/proxy/status/compact", AdminRoutes::ProxyStatusCompact);
+    router.add("/proxy/status/purge", AdminRoutes::ProxyStatusPurge);
+
     return router;
 }
 
 
 impl Admin {
-    pub fn new(nordvpn: nordvpn::NordVPN) -> Result<Self, &'static str> {
+    pub fn new(curl_client: CurlClient, nordvpn: nordvpn::NordVPN, proxy: Arc<Mutex<proxy::ProxyState>>) -> Result<Self, &'static str> {
 
         log::info!("Creating new Admin instance");
 
         return Ok(Self {
+            curl_client,
             nordvpn,
+            proxy,
             router: router()
         });
     }
@@ -173,10 +195,21 @@ impl Service<Request<IncomingBody>> for Admin {
                 mk_response(self.set_rotation_from_str(_type, _value))
             },
             
+
+            (&Method::GET,  AdminRoutes::IpPublic) => {
+                let ip = self.curl_client.get(IP_URL).unwrap();
+                mk_response(ip)
+            }
+
             
             (&Method::GET,  AdminRoutes::NordvpnAccount) => mk_response(format!("{}: {:?}", path, self.nordvpn.account())),
             (&Method::POST, AdminRoutes::NordvpnConnect) => {
-                mk_response(serde_json::to_string(&self.nordvpn.connect()).unwrap())
+                let mut proxy_lock = self.proxy.lock().unwrap();
+                proxy_lock.drain();
+                let resp = mk_response(serde_json::to_string(&self.nordvpn.connect()).unwrap());
+                proxy_lock.activate();
+                drop(proxy_lock);
+                resp
             },
             (&Method::POST, AdminRoutes::NordvpnConnectWithArgument) => {
                 let argument = admin_route.params().find("ARGUMENT").unwrap();
@@ -209,10 +242,16 @@ impl Service<Request<IncomingBody>> for Admin {
             (&Method::POST, AdminRoutes::NordvpnDaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", self.nordvpn.daemon_start(Some(30)))),
             (&Method::POST, AdminRoutes::NordvpnDaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", self.nordvpn.daemon_stop())),
             
+            (&Method::GET,  AdminRoutes::ProxyStatus) => mk_response(format!("/proxy/status: {:?}", serde_json::to_string(&self.proxy.lock().unwrap().status()).unwrap())),
+            (&Method::GET,  AdminRoutes::ProxyStatusCompact) => mk_response(format!("/proxy/status: {:?}", serde_json::to_string(&self.proxy.lock().unwrap().compact_status()).unwrap())),
+
+            (&Method::POST,  AdminRoutes::ProxyStatusPurge) => mk_response(format!("/proxy/status: {:?}", serde_json::to_string(&self.proxy.lock().unwrap().purge()).unwrap())),
+
             _ => {
                 log::warn!("Not found: {:?} {:?}", req.method(), req.uri().path());
                 mk_response("oh no! not found".into())
             }
+            
         };
 
         Box::pin(async { res })

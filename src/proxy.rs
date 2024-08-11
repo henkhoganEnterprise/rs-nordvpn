@@ -3,7 +3,10 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #![deny(warnings)]
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -14,12 +17,17 @@ use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
 use hyper::{Method, Request, Response};
 
+
+use serde_derive::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
+
+
 
 #[path = "./benches/support/mod.rs"]
 mod support;
 use support::TokioIo;
 use tokio_util::bytes;
+
 
 // To try this example:
 // 1. cargo run --example http_proxy
@@ -28,24 +36,38 @@ use tokio_util::bytes;
 //    $ export https_proxy=http://0.0.0.0:8100
 // 3. send requests
 //    $ curl -i https://www.some_domain.com/
-
-pub async fn run(bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
-    //let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
+pub async fn run(proxy_state: Arc<Mutex<ProxyState>>, bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(bind_addr).await?;
     log::info!("Proxy Listening on http://{}", bind_addr);
 
     loop {
         let (stream, _) = listener.accept().await?;
+
+        for _ in 0..1000 {
+            // trick from https://tokio.rs/tokio/tutorial/shared-state to prevent: 
+            // error: future cannot be sent between threads safely
+            {
+                let mut proxy_lock = proxy_state.lock().unwrap();
+                if !proxy_lock.drained {
+                    proxy_lock.add_connection();
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
         let peer_addr = stream.peer_addr()?;
         log::info!("Proxy accepted a new TCP connection from: {}", peer_addr);
         let io = TokioIo::new(stream);
 
+        let _proxy_state = proxy_state.clone();
         tokio::task::spawn(async move {
+            let __proxy_state = _proxy_state;
             if let Err(err) = http1::Builder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
-                .serve_connection(io, service_fn(proxy))
+                .serve_connection(io, service_fn(move |req| proxy(__proxy_state.clone(), req)))
                 .with_upgrades()
                 .await
             {
@@ -53,12 +75,16 @@ pub async fn run(bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>
             }
         });
         log::info!("Proxy connection closed from {}", peer_addr);
+        proxy_state.lock().unwrap().remove_connection();
     }
 }
 
+
 async fn proxy(
+    proxy_state: Arc<Mutex<ProxyState>>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+
     log::info!("req: {:?}", req);
 
     if Method::CONNECT == req.method() {
@@ -75,6 +101,9 @@ async fn proxy(
         // Note: only after client received an empty body with STATUS_OK can the
         // connection be upgraded, so we can't return a response inside
         // `on_upgrade` future.
+
+        let host = req.uri().host().expect("uri has no host");
+        proxy_state.lock().unwrap().add_connect_request(host);
         if let Some(addr) = host_addr(req.uri()) {
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
@@ -86,13 +115,13 @@ async fn proxy(
                     Err(e) => log::error!("upgrade error: {}", e),
                 }
             });
-
+            proxy_state.lock().unwrap().remove_connect_request();
             Ok(Response::new(empty()))
         } else {
             log::error!("CONNECT host is not socket addr: {:?}", req.uri());
             let mut resp = Response::new(full("CONNECT must be to a socket address"));
             *resp.status_mut() = http::StatusCode::BAD_REQUEST;
-
+            proxy_state.lock().unwrap().remove_connect_request();
             Ok(resp)
         }
     } else {
@@ -152,4 +181,95 @@ async fn tunnel(upgraded: Upgraded, addr: String) -> std::io::Result<()> {
     );
 
     Ok(())
+}
+
+/*
+
+*/
+#[derive(Serialize, Deserialize)]
+pub struct ProxyStatus {
+    drained: bool,
+    inflight_connections: u16,
+    inflight_connect_requests: u16,
+    monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ProxyStatusCompact {
+    drained: bool,
+    inflight_connections: u16,
+    inflight_connect_requests: u16,
+    monitored_hosts: HashMap<String, i32>
+}
+
+#[derive(Debug, Clone)]
+pub struct ProxyState {
+    drained: bool,
+    inflight_connections: u16,
+    inflight_connect_requests: u16,
+    monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>
+}
+
+impl ProxyState {
+    pub fn new(monitored_hosts: Vec<String>) -> Self {
+        ProxyState {
+            drained: false,
+            inflight_connections: 0,
+            inflight_connect_requests: 0,
+            monitored_hosts: monitored_hosts.iter().map(|host| (host.clone(), (None, vec![]))).collect()
+        }
+    }
+
+    pub fn compact_status(&self) -> ProxyStatusCompact {
+        ProxyStatusCompact {
+            drained: self.drained,
+            inflight_connections: self.inflight_connections,
+            inflight_connect_requests: self.inflight_connect_requests,
+            monitored_hosts: self.monitored_hosts.iter().map(|(host, (_last, times))| (host.clone(), times.len() as i32)).collect()
+        }
+    }
+
+    pub fn purge(&mut self) {
+        self.monitored_hosts.iter_mut().for_each(|(_host, (_last, times))| {
+            times.retain(|time| time.elapsed().unwrap().as_secs() < 60);
+        });
+    }
+
+    pub fn status(&self) -> ProxyStatus {
+        ProxyStatus {
+            drained: self.drained,
+            inflight_connections: self.inflight_connections,
+            inflight_connect_requests: self.inflight_connect_requests,
+            monitored_hosts: self.monitored_hosts.clone()
+        }
+    }
+
+    pub fn add_connection(&mut self) {
+        self.inflight_connections += 1;
+    }
+
+    pub fn remove_connection(&mut self) {
+        self.inflight_connections -= 1;
+    }
+
+    pub fn add_connect_request(&mut self, host: &str) {
+        self.monitored_hosts.get_mut(host).map(|(last, times)| {
+            times.push(SystemTime::now());
+            *last = Some(SystemTime::now());
+        });
+        self.inflight_connect_requests += 1;
+    }
+
+    pub fn remove_connect_request(&mut self) {
+        self.inflight_connect_requests -= 1;
+    }
+
+    pub fn drain(&mut self) {
+        self.drained = true;
+    }
+
+    pub fn activate(&mut self) {
+        self.drained = false;
+    }
+
 }
