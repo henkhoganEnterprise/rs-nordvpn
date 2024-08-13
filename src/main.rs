@@ -64,7 +64,7 @@ async fn main() {
         .init();
 
     // args.filter = vec!["United States:1".to_string(), "Germany:2".to_string()];
-    let filters: HashMap<u16, Vec<String>> = args.filter.clone().into_iter().enumerate().fold(HashMap::new(), |mut acc, (i, filter)| {
+    let filter_map: HashMap<u16, Vec<String>> = args.filter.clone().into_iter().enumerate().fold(HashMap::new(), |mut acc, (i, filter)| {
         let slot = 0;
         if filter.contains(":" ) {
             let parts: Vec<&str> = filter.split(":").collect();
@@ -76,7 +76,7 @@ async fn main() {
         }
         acc
     });
-    log::info!("Filters: {:?}", filters);
+    log::info!("Filter Map: {:?}", filter_map);
     
     let filter_slot: Option<u16> = match std::env::var("NORDVPN_FILTER_SLOT") {
         Ok(value) => u16::from_str(&value).ok(),
@@ -84,12 +84,18 @@ async fn main() {
     };
     log::info!("Filter slot: {:?}", filter_slot);
 
-    let filter = match (args.filter.len(), filter_slot) {
+    let filters = match (filter_map.len(), filter_slot) {
         (0,_) => None,
-        (1, _) => Some(args.filter[0].clone()),
+        (1, _) => Some(filter_map[&0].clone()),
         (_, None) => None,
-        (_, Some(filter_slot)) if filter_slot >= args.filter.len() as u16 => None,
-        (_, Some(filter_slot)) => Some(args.filter[filter_slot as usize].clone())
+        (_, Some(filter_slot)) if filter_slot >= filter_map.len() as u16 => None,
+        (_, Some(filter_slot)) => Some(filter_map[&filter_slot].clone())
+    };
+    log::info!("Filters: {:?}", filters);
+
+    let filter = match filters {
+        Some(filters) => Some(filters[0].clone()),
+        None => None
     };
     log::info!("Filter: {:?}", filter);
     
