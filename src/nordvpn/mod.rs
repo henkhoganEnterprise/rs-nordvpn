@@ -87,6 +87,10 @@ impl NordVPN {
         Connecting to Australia #600 (au600.nordvpn.com)
         You are connected to Australia #600 (au600.nordvpn.com)!
          */
+        /*
+        Connecting to Germany #1078 (de1078.nordvpn.com)
+        You are connected to Germany #1078 (de1078.nordvpn.com)!
+        */
         let connected_substring = "You are connected to ";
         /*
         Connecting to Germany #1087 (de1087.nordvpn.com)
@@ -94,48 +98,50 @@ impl NordVPN {
         */
         let not_connected_substring = "The VPN connection has failed. Please check your internet connection and try connecting to the VPN again. If the issue persists, contact our customer support.";
         
-        let connected;
-        let group: String;
-        let server_id: String;
-        let server_fqdn: String;
 
-        let mut lines = output.lines();
-        let _first_line = lines.next().unwrap();
-        let second_line = lines.next().unwrap();
+        for line in output.lines() {
+            if line.contains(connected_substring) {
+                let infos = line.split(connected_substring).collect::<Vec<&str>>()[1];
+                let infos = infos.split(" ").collect::<Vec<&str>>();
+                let group = infos[0].to_string();
+                let server_id = infos[1].to_string();
+                let server_fqdn= infos[2].replace("(", "").replace(")!", "");
+                return NordVpnConnectOutput {
+                    connected: true,
+                    group,
+                    server_id,
+                    server_fqdn
+                };
+            }
+            if line.contains(not_connected_substring) {
+                return NordVpnConnectOutput {
+                    connected: false,
+                    group: "".to_string(),
+                    server_id: "".to_string(),
+                    server_fqdn: "".to_string()
+                };
+            }
+        }
 
-        if second_line.contains(connected_substring) {
-            connected = true;
-            let infos = second_line.split(connected_substring).collect::<Vec<&str>>()[1];
-            let infos = infos.split(" ").collect::<Vec<&str>>();
-            group = infos[0].to_string();
-            server_id = infos[1].to_string();
-            server_fqdn= infos[2].replace("(", "").replace(")!", "");
-        }
-        
-        else {
-            connected = false;
-            group = "".to_string();
-            server_id = "".to_string();
-            server_fqdn = "".to_string();
-        }
-
-        if !second_line.contains(not_connected_substring) {
-            log::warn!("Failed to parse connect output: {} -> assuming disconnected", output);
-        }
+    
+        log::warn!("Failed to parse connect output:\n{}\n-> assuming disconnected", output);
         
         return NordVpnConnectOutput {
-            connected,
-            group,
-            server_id,
-            server_fqdn
+            connected: false,
+            group: "".to_string(),
+            server_id: "".to_string(),
+            server_fqdn: "".to_string()
         };
     
         
     }
 
-    pub fn connect(&self) -> Result<NordVpnConnectOutput, ()> {
+    pub fn connect(&self, filter: Option<String>) -> Result<NordVpnConnectOutput, ()> {
         log::debug!("Connecting to NordVPN...");
-        let output = self._nordvpn_command(vec!["connect".to_string()]);
+        let output = match filter {
+            Some(filter) => self._nordvpn_command(vec!["connect".to_string(), filter]),
+            None => self._nordvpn_command(vec!["connect".to_string()])
+        };
         if output.0 {
             log::info!("Connected: {}", output.1);
             return Ok(self.parse_connect_output(output.1));
@@ -144,16 +150,7 @@ impl NordVPN {
         return Err(());
     }
 
-    pub fn connect_with_argument(&self, argument: &str) -> Result<NordVpnConnectOutput, ()> {
-        log::debug!("Connecting to NordVPN...");
-        let output = self._nordvpn_command(vec!["connect".to_string(), argument.to_string()]);
-        if output.0 {
-            log::info!("Connected: {}", output.1);
-            return Ok(self.parse_connect_output(output.1));
-        } 
-        log::error!("Failed to connect: {}", output.1.clone());
-        return Err(());
-    }
+
 
     pub fn disconnect(&self) -> bool {
         log::debug!("Disconnecting from NordVPN...");

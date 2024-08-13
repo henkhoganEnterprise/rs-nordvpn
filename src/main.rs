@@ -3,7 +3,7 @@ use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
-use std::{io::Write, process::Command, str::FromStr, sync::{Arc, Mutex}, vec};
+use std::{collections::HashMap, io::Write, process::Command, str::FromStr, sync::{Arc, Mutex}, u16, vec};
 use tokio_util::sync::CancellationToken;
 use std::net::SocketAddr;
 
@@ -39,7 +39,10 @@ struct CliArgs {
     bind_ip: String,
     #[arg(short, long)]
     #[clap(default_values_t = Vec::<String>::new())]
-    monitored_hosts: Vec<String>
+    monitored_hosts: Vec<String>,
+    #[arg(short, long)]
+    #[clap(default_values_t = Vec::<String>::new())]
+    filter: Vec<String>
 }
 
 
@@ -47,7 +50,6 @@ struct CliArgs {
 async fn main() {
     
     let args = CliArgs::parse();
-    
     
     Builder::new()
     .format(|buf, record| {
@@ -61,6 +63,35 @@ async fn main() {
         .filter(None, LevelFilter::Info)
         .init();
 
+    // args.filter = vec!["United States:1".to_string(), "Germany:2".to_string()];
+    let filters: HashMap<u16, Vec<String>> = args.filter.clone().into_iter().enumerate().fold(HashMap::new(), |mut acc, (i, filter)| {
+        let slot = 0;
+        if filter.contains(":" ) {
+            let parts: Vec<&str> = filter.split(":").collect();
+            let slot = parts[1].parse::<u16>().unwrap();
+            let country = parts[0].to_string();
+            acc.entry(slot).or_insert(vec![]).push(country);
+        } else {
+            acc.entry(slot).or_insert(vec![]).push(filter);
+        }
+        acc
+    });
+    log::info!("Filters: {:?}", filters);
+    
+    let filter_slot: Option<u16> = match std::env::var("NORDVPN_FILTER_SLOT") {
+        Ok(value) => u16::from_str(&value).ok(),
+        Err(_) => None,
+    };
+    log::info!("Filter slot: {:?}", filter_slot);
+
+    let filter = match (args.filter.len(), filter_slot) {
+        (0,_) => None,
+        (1, _) => Some(args.filter[0].clone()),
+        (_, None) => None,
+        (_, Some(filter_slot)) if filter_slot >= args.filter.len() as u16 => None,
+        (_, Some(filter_slot)) => Some(args.filter[filter_slot as usize].clone())
+    };
+    log::info!("Filter: {:?}", filter);
     
 
     let curl_client = CurlClient::new_with_path_discovery();
@@ -102,7 +133,7 @@ async fn main() {
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
     nordvpn.account();
-    nordvpn.connect().unwrap();
+    nordvpn.connect(filter).unwrap();
     nordvpn.status();
     log::info!("Public IP: {}", curl_client.get("https://api.ipify.org").unwrap());
 

@@ -206,7 +206,7 @@ impl Service<Request<IncomingBody>> for Admin {
             (&Method::POST, AdminRoutes::NordvpnConnect) => {
                 let mut proxy_lock = self.proxy.lock().unwrap();
                 proxy_lock.drain();
-                let resp = mk_response(serde_json::to_string(&self.nordvpn.connect()).unwrap());
+                let resp = mk_response(serde_json::to_string(&self.nordvpn.connect(None)).unwrap());
                 proxy_lock.activate();
                 drop(proxy_lock);
                 resp
@@ -214,7 +214,7 @@ impl Service<Request<IncomingBody>> for Admin {
             (&Method::POST, AdminRoutes::NordvpnConnectWithArgument) => {
                 let argument = admin_route.params().find("ARGUMENT").unwrap();
                 log::info!("argument: {:?}", argument);
-                let output = match self.nordvpn.connect_with_argument(argument) {
+                let output = match self.nordvpn.connect(Some(argument.to_string())) {
                     Ok(output) => {
                         log::info!("Connected with argument: {:?}", argument);
                         mk_response(serde_json::to_string(&output).unwrap())
