@@ -1,17 +1,16 @@
 #![deny(warnings)]
 
-use std::future::Future;
 use std::net::SocketAddr;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
+use http_body_util::BodyExt;
 //use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use http_body_util::Full;
+use http_body_util::{combinators::BoxBody, Full};
 use hyper::server::conn::http1;
-use hyper::{body::Incoming as IncomingBody, Method, Request, Response};
+use hyper::{Method, Request, Response};
 use tokio::net::TcpListener;
-use hyper::service::Service;
+use hyper::service::service_fn;
 
 
 use route_recognizer::Router;
@@ -28,22 +27,30 @@ use tokio_util::bytes;
 
 const IP_URL: &str = "https://api.ipify.org";
 
-pub async fn run(bind_addr: SocketAddr, admin: Arc<Admin>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run<'a>(bind_addr: SocketAddr, admin: Admin) -> Result<(), Box<dyn std::error::Error>> {
     //let bind_addr = SocketAddr::from_str((ip, port));
 
     let listener = TcpListener::bind(bind_addr).await?;
     log::info!("Admin istening on http://{}", bind_addr);
 
+    
+    let admin = Arc::new(admin);
   
     loop {
         let (stream, _) = listener.accept().await?;
         log::info!("Admin accepted a new TCP connection from: {}", stream.peer_addr()?);
         let io = TokioIo::new(stream);
-        let x = admin.clone();
-
+        //let x = admin.clone();
+        let admin = admin.clone();
         tokio::task::spawn(async move {
-            if let Err(err) = http1::Builder::new().serve_connection(io, x).await {
-                println!("Failed to serve connection: {:?}", err);
+            if let Err(err) = http1::Builder::new()
+                .serve_connection(
+                    io, 
+                    service_fn(move |req| call(admin.clone(), req))
+                )
+                .await 
+            {
+                log::error!("Failed to serve connection: {:?}", err);
             }
         });
     }
@@ -68,7 +75,7 @@ use crate::{helper, nordvpn, proxy};
 
 #[derive(Debug, Clone)]
 pub enum AdminRoutes {
-    AdminRotation,
+    AdminRotate,
     IpLocal,
     IpPublic,
     NordvpnAccount,
@@ -77,6 +84,7 @@ pub enum AdminRoutes {
     NordvpnDisconnect,
     NordvpnLogs,
     NordvpnLogsWithArgument,
+    NordvpnRotate,
     NordvpnStatus,
     NordvpnDaemonStatus,
     NordvpnDaemonRestart,
@@ -91,14 +99,14 @@ pub enum AdminRoutes {
 pub struct Admin {
     curl_client: CurlClient,
     nordvpn: nordvpn::NordVPN,
-    proxy: Arc<Mutex<proxy::ProxyState>>,
+    proxy:Arc<RwLock<proxy::ProxyState>>,
     router: Router<AdminRoutes>
 }
 
 pub fn router() -> Router<AdminRoutes> {
     let mut router: Router<AdminRoutes> = Router::new();
 
-    router.add("/admin/rotation/:TYPE/:VALUE", AdminRoutes::AdminRotation);
+    router.add("/admin/rotation/:TYPE/:VALUE", AdminRoutes::AdminRotate);
 
     router.add("/ip/local", AdminRoutes::IpLocal);
     router.add("/ip/public", AdminRoutes::IpPublic);
@@ -109,8 +117,12 @@ pub fn router() -> Router<AdminRoutes> {
     router.add("/nordvpn/connect/:ARGUMENT", AdminRoutes::NordvpnConnectWithArgument);
 
     router.add("/nordvpn/disconnect", AdminRoutes::NordvpnDisconnect);
+
     router.add("/nordvpn/logs", AdminRoutes::NordvpnLogs);
     router.add("/nordvpn/logs/:LINES", AdminRoutes::NordvpnLogsWithArgument);
+
+    router.add("/nordvpn/rotate", AdminRoutes::NordvpnRotate);
+
     router.add("/nordvpn/status", AdminRoutes::NordvpnStatus);
 
     router.add("/nordvpn/daemon/status", AdminRoutes::NordvpnDaemonStatus);
@@ -127,7 +139,7 @@ pub fn router() -> Router<AdminRoutes> {
 
 
 impl Admin {
-    pub fn new(curl_client: CurlClient, nordvpn: nordvpn::NordVPN, proxy: Arc<Mutex<proxy::ProxyState>>) -> Result<Self, &'static str> {
+    pub fn new(curl_client: CurlClient, nordvpn: nordvpn::NordVPN, proxy: Arc<RwLock<proxy::ProxyState>>) -> Result<Self, &'static str> {
 
         log::info!("Creating new Admin instance");
 
@@ -167,7 +179,105 @@ impl Admin {
     } */
 }
 
-impl Service<Request<IncomingBody>> for Admin {
+
+fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
+    Full::new(chunk.into())
+        .map_err(|never| match never {})
+        .boxed()
+}
+
+fn mk_response(s: String) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    Ok(Response::new(full(s)))   
+}
+
+async fn call(
+    admin: Arc<Admin>,
+    req: Request<hyper::body::Incoming>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+
+    let path = req.uri().path();
+    let admin_route = match admin.router.recognize(path) {
+        Ok(binding) => binding,
+        Err(_) => return mk_response("route not matched".into()),
+    };   
+
+    let res = match (req.method(), admin_route.handler()) {
+
+        (&Method::GET,  AdminRoutes::AdminRotate) => mk_response(admin.get_rotation()),
+        (&Method::POST,  AdminRoutes::AdminRotate) => {
+            let _type = admin_route.params().find("TYPE").unwrap();
+            let _value = admin_route.params().find("VALUE").unwrap();
+            log::info!("_type: {:?},  value: {:?}", _type, _value);
+            mk_response(admin.set_rotation_from_str(_type, _value))
+        },
+        
+
+        (&Method::GET,  AdminRoutes::IpPublic) => {
+            let ip = admin.curl_client.get(IP_URL).unwrap();
+            mk_response(ip)
+        },
+
+        
+        (&Method::GET,  AdminRoutes::NordvpnAccount) => mk_response(format!("{}: {:?}", path, admin.nordvpn.account())),
+        (&Method::POST, AdminRoutes::NordvpnConnect) => {
+            admin.proxy.write().unwrap().drain();
+            let resp = mk_response(serde_json::to_string(&admin.nordvpn.connect(None)).unwrap());
+            admin.proxy.write().unwrap().activate();
+            resp
+        },
+        (&Method::POST, AdminRoutes::NordvpnConnectWithArgument) => {
+            let argument = admin_route.params().find("ARGUMENT").unwrap();
+            log::info!("argument: {:?}", argument);
+            let output = match admin.nordvpn.connect(Some(argument.to_string())) {
+                Ok(output) => {
+                    log::info!("Connected with argument: {:?}", argument);
+                    mk_response(serde_json::to_string(&output).unwrap())
+
+                },
+                Err(e) => {
+                    log::error!("Failed to connect with argument: {:?}", argument);
+                    mk_response(format!("Failed to connect with argument: {:?}", e))
+                }
+            };
+            output
+        },
+
+        (&Method::POST, AdminRoutes::NordvpnDisconnect) => mk_response(format!("/nordvpn/disconnect: {:?}", admin.nordvpn.disconnect())),
+        (&Method::GET,  AdminRoutes::NordvpnLogs) => mk_response(serde_json::to_string(&admin.nordvpn.logs(10)).unwrap()),
+        (&Method::GET,  AdminRoutes::NordvpnLogsWithArgument) => {
+            let argument = admin_route.params().find("LINES").unwrap();
+            log::info!("argument: {:?}", argument);
+            mk_response(serde_json::to_string(&admin.nordvpn.logs(argument.parse().unwrap())).unwrap())
+        },
+        (&Method::POST,  AdminRoutes::NordvpnRotate) => {
+            log::error!("Not implemented");
+            panic!("not implemented");
+            //mk_response(serde_json::to_string(&admin.nordvpn.rotate()).unwrap())
+        },
+        (&Method::GET,  AdminRoutes::NordvpnStatus) => mk_response(serde_json::to_string(&admin.nordvpn.status()).unwrap()),
+
+        (&Method::POST, AdminRoutes::NordvpnDaemonRestart) => mk_response(format!("/nordvpn/daemon/restart: {:?}", admin.nordvpn.daemon_restart(Some(30)))),
+        (&Method::GET,  AdminRoutes::NordvpnDaemonStatus) => mk_response(format!("/nordvpn/daemon/status: {:?}", admin.nordvpn.daemon_status().output)),
+        (&Method::POST, AdminRoutes::NordvpnDaemonStart) => mk_response(format!("/nordvpn/daemon/start: {:?}", admin.nordvpn.daemon_start(Some(30)))),
+        (&Method::POST, AdminRoutes::NordvpnDaemonStop) => mk_response(format!("/nordvpn/daemon/stop: {:?}", admin.nordvpn.daemon_stop())),
+        
+        (&Method::GET,  AdminRoutes::ProxyStatus) => mk_response(format!("/proxy/status: {:?}", serde_json::to_string(&admin.proxy.read().unwrap().status()).unwrap())),
+        (&Method::GET,  AdminRoutes::ProxyStatusCompact) => mk_response(format!("/proxy/status: {:?}", serde_json::to_string(&admin.proxy.read().unwrap().compact_status()).unwrap())),
+
+        (&Method::POST,  AdminRoutes::ProxyStatusPurge) => mk_response(format!("/proxy/status: {:?}", serde_json::to_string(&admin.proxy.write().unwrap().purge()).unwrap())),
+
+        _ => {
+            log::warn!("Not found: {:?} {:?}", req.method(), req.uri().path());
+            mk_response("oh no! not found".into())
+        }
+        
+    };
+    res
+
+   // Box::pin(async { res })
+}
+/*
+impl<'a> Service<Request<IncomingBody>> for Admin<'a> {
     type Response = Response<Full<Bytes>>;
     type Error = hyper::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -258,3 +368,4 @@ impl Service<Request<IncomingBody>> for Admin {
     }
 }
 
+*/

@@ -1,9 +1,10 @@
+use admin::Admin;
 use log;
 use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
-use std::{collections::HashMap, io::Write, process::Command, str::FromStr, sync::{Arc, Mutex}, u16, vec};
+use std::{collections::{HashMap, HashSet}, io::Write, process::Command, str::FromStr, sync::{Arc, RwLock}, u16, vec};
 use tokio_util::sync::CancellationToken;
 use std::net::SocketAddr;
 
@@ -46,6 +47,7 @@ struct CliArgs {
 }
 
 
+
 #[tokio::main]
 async fn main() {
     
@@ -64,7 +66,7 @@ async fn main() {
         .init();
 
     // args.filter = vec!["United States:1".to_string(), "Germany:2".to_string()];
-    let filter_map: HashMap<u16, Vec<String>> = args.filter.clone().into_iter().enumerate().fold(HashMap::new(), |mut acc, (i, filter)| {
+    let filter_map: HashMap<u16, Vec<String>> = args.filter.clone().into_iter().enumerate().fold(HashMap::new(), |mut acc, (_i, filter)| {
         let slot = 0;
         if filter.contains(":" ) {
             let parts: Vec<&str> = filter.split(":").collect();
@@ -93,11 +95,13 @@ async fn main() {
     };
     log::info!("Filters: {:?}", filters);
 
+    /*
     let filter = match filters {
         Some(filters) => Some(filters[0].clone()),
         None => None
     };
     log::info!("Filter: {:?}", filter);
+     */
     
 
     let curl_client = CurlClient::new_with_path_discovery();
@@ -120,7 +124,8 @@ async fn main() {
     }
 
 
-    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token.clone()) {
+    let filter_set: Option<HashSet<String>> = filters.map(|filter| filter.into_iter().collect());
+    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token.clone(), filter_set) {
         Ok(nordvpn) => nordvpn,
         Err(err) => {
             log::error!("Failed to create NordVPN instance: {}", err);
@@ -139,49 +144,41 @@ async fn main() {
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
     nordvpn.account();
-    nordvpn.connect(filter).unwrap();
+    if let Err(e) = nordvpn.connect(None) {
+        log::error!("{:?}", e);
+        std::process::exit(1)
+    }
     nordvpn.status();
     log::info!("Public IP: {}", curl_client.get("https://api.ipify.org").unwrap());
 
-
-    let proxy_state = ProxyState::new(args.monitored_hosts);
-    let proxy_state_mutex = Mutex::new(proxy_state);
-    let proxy_state_mutex_arc = Arc::new(proxy_state_mutex);
+    let proxy_state = Arc::new(RwLock::new(ProxyState::new(args.monitored_hosts)));
     
-
-   
-
-
-    
-    let _admin = match admin::Admin::new(curl_client, nordvpn, proxy_state_mutex_arc.clone()) {
+    let admin = match Admin::new(curl_client, nordvpn, proxy_state.clone()) {
         Ok(_admin) => _admin,
         Err(err) => {
             log::error!("Failed to create NordAdminVPN instance: {}", err);
             std::process::exit(1);
         }
     };
-
-    // Step 1: Create a new CancellationToken
+ 
+ 
     let token = CancellationToken::new();
-
     
-    // Task 1 - Wait for token cancellation or a long time
     let admin_token = token.clone();
     let admin_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.admin_port)).unwrap();
     let admin_task = tokio::spawn(async move {
         tokio::select! {
-            // Step 3: Using cloned token to listen to cancellation requests
             _ = admin_token.cancelled() => {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = admin::run(admin_addr, Arc::new(_admin)) => {
+            _ = admin::run(admin_addr, admin) => {
                 // Long work has completed
             }
         }
     });
 
-    // Task 2 - Wait for token cancellation or a long time
+
     let proxy_token = token.clone();
     let proxy_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.proxy_port)).unwrap();
     let proxy_task = tokio::spawn(async move {
@@ -191,7 +188,7 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = proxy::run(proxy_state_mutex_arc.clone(),proxy_addr) => {
+            _ = proxy::run(proxy_state.clone(),proxy_addr) => {
                 // Long work has completed
             }
         }

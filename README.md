@@ -16,3 +16,12 @@ curl --proxy http://127.0.0.1:3128 https://google.com
 
 # ToDo
 proxy needs to become an object with a state that counts requests to hosts and calls reconnected after x connections
+
+
+main()
+
+Admin           +
+                +
+Proxy       +++++
+            +
+Nordvpn +++++

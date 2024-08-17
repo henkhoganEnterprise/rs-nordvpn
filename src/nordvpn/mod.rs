@@ -1,10 +1,16 @@
-use std::process::Command;
+use std::{collections::{HashSet, VecDeque}, process::Command};
 
 use daemon::StatusOutput;
 use serde_derive::{Deserialize, Serialize};
 
 
 mod daemon;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Error {
+    ConnectFailed,
+    FilterDisabled
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct NordVpnConnectOutput {
@@ -33,16 +39,23 @@ pub struct NordVpnStatusOutput {
 pub struct NordVPN {
     path: String,
     token: String,
-    daemon: daemon::Daemon
+    daemon: daemon::Daemon,
+    filter_enabled: bool,
+    filter: VecDeque<String>,
 }
 
 impl NordVPN {
-    pub fn new(path: String, token: String) -> Result<Self, &'static str> {
+    pub fn new(path: String, token: String, filter: Option<HashSet<String>>) -> Result<Self, &'static str> {
         log::info!("Creating new NordVPN instance");
         return Ok(Self {
             path,
             token,
-            daemon: daemon::Daemon::new()?
+            daemon: daemon::Daemon::new()?,
+            filter_enabled: filter == None,
+            filter: match filter {
+                None => VecDeque::<String>::new(),
+                Some(set) => set.into_iter().collect(),
+            }
         });
     }
 
@@ -67,8 +80,6 @@ impl NordVPN {
             return (false, String::from_utf8_lossy(&_output.stderr).trim().to_string());
         }
     }
-
-
 
     pub fn account(&self) -> bool {
         log::debug!("Checking NordVPN account...");
@@ -136,7 +147,7 @@ impl NordVPN {
         
     }
 
-    pub fn connect(&self, filter: Option<String>) -> Result<NordVpnConnectOutput, ()> {
+    pub fn connect(&self, filter: Option<String>) -> Result<NordVpnConnectOutput, Error> {
         log::debug!("Connecting to NordVPN...");
         let output = match filter {
             Some(filter) => self._nordvpn_command(vec!["connect".to_string(), filter]),
@@ -147,10 +158,8 @@ impl NordVPN {
             return Ok(self.parse_connect_output(output.1));
         } 
         log::error!("Failed to connect: {}", output.1.clone());
-        return Err(());
+        return Err(Error::ConnectFailed);
     }
-
-
 
     pub fn disconnect(&self) -> bool {
         log::debug!("Disconnecting from NordVPN...");
@@ -207,6 +216,16 @@ impl NordVPN {
             .output()
             .expect("Failed to execute command")
             .stdout
+    }
+
+    pub fn rotate(&mut self) -> Result<NordVpnConnectOutput, Error> {
+        if !self.filter_enabled {
+            return Err(Error::FilterDisabled);
+        }
+        let filter = self.filter.pop_front().unwrap();
+        let o = self.connect(Some(filter.clone()));
+        self.filter.push_back(filter);
+        o
     }
 
     pub fn set_analytics(&self, enabled: bool) -> bool {

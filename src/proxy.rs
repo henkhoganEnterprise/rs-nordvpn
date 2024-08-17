@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
 use bytes::Bytes;
@@ -36,38 +36,44 @@ use tokio_util::bytes;
 //    $ export https_proxy=http://0.0.0.0:8100
 // 3. send requests
 //    $ curl -i https://www.some_domain.com/
-pub async fn run(proxy_state: Arc<Mutex<ProxyState>>, bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(proxy_state: Arc<RwLock<ProxyState>>, bind_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(bind_addr).await?;
     log::info!("Proxy Listening on http://{}", bind_addr);
 
+    
     loop {
         let (stream, _) = listener.accept().await?;
-
+        
+        /*
+        let proxy_state = proxy_state.clone();
         for _ in 0..1000 {
             // trick from https://tokio.rs/tokio/tutorial/shared-state to prevent: 
             // error: future cannot be sent between threads safely
             {
-                let mut proxy_lock = proxy_state.lock().unwrap();
-                if !proxy_lock.drained {
-                    proxy_lock.add_connection();
-                    break;
-                }
+            //let proxy_state = proxy_state.clone();
+            if !proxy_state.read().unwrap().drained {
+                proxy_state.write().unwrap().add_connection();
+                break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        */
+    
         let peer_addr = stream.peer_addr()?;
         log::info!("Proxy accepted a new TCP connection from: {}", peer_addr);
         let io = TokioIo::new(stream);
-
-        let _proxy_state = proxy_state.clone();
+    
+        let proxy_state = proxy_state.clone();
         tokio::task::spawn(async move {
-            let __proxy_state = _proxy_state;
             if let Err(err) = http1::Builder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
-                .serve_connection(io, service_fn(move |req| proxy(__proxy_state.clone(), req)))
+                .serve_connection(
+                    io, 
+                    service_fn(move |req| proxy(proxy_state.clone(), req))
+                )
                 .with_upgrades()
                 .await
             {
@@ -75,17 +81,17 @@ pub async fn run(proxy_state: Arc<Mutex<ProxyState>>, bind_addr: SocketAddr) -> 
             }
         });
         log::info!("Proxy connection closed from {}", peer_addr);
-        proxy_state.lock().unwrap().remove_connection();
     }
 }
 
 
 async fn proxy(
-    proxy_state: Arc<Mutex<ProxyState>>,
+    proxy_state: Arc<RwLock<ProxyState>>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
 
     log::info!("req: {:?}", req);
+    proxy_state.write().unwrap().add_connection();
 
     if Method::CONNECT == req.method() {
         // Received an HTTP request like:
@@ -103,7 +109,7 @@ async fn proxy(
         // `on_upgrade` future.
 
         let host = req.uri().host().expect("uri has no host");
-        proxy_state.lock().unwrap().add_connect_request(host);
+        proxy_state.write().unwrap().add_connect_request(host);
         if let Some(addr) = host_addr(req.uri()) {
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
@@ -115,13 +121,14 @@ async fn proxy(
                     Err(e) => log::error!("upgrade error: {}", e),
                 }
             });
-            proxy_state.lock().unwrap().remove_connect_request();
+            proxy_state.write().unwrap().remove_connect_request();
             Ok(Response::new(empty()))
         } else {
             log::error!("CONNECT host is not socket addr: {:?}", req.uri());
             let mut resp = Response::new(full("CONNECT must be to a socket address"));
             *resp.status_mut() = http::StatusCode::BAD_REQUEST;
-            proxy_state.lock().unwrap().remove_connect_request();
+            proxy_state.write().unwrap().remove_connect_request();
+            proxy_state.write().unwrap().remove_connection();
             Ok(resp)
         }
     } else {
@@ -143,6 +150,7 @@ async fn proxy(
         });
 
         let resp = sender.send_request(req).await?;
+        proxy_state.write().unwrap().remove_connection();
         Ok(resp.map(|b| b.boxed()))
     }
 }
