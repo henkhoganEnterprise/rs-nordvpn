@@ -219,8 +219,8 @@ impl NordVPN {
     }
 
     pub fn rotate(&mut self) -> Result<NordVpnConnectOutput, Error> {
-        if !self.filter_enabled {
-            return Err(Error::FilterDisabled);
+        if !self.filter_enabled || self.filter.len() == 0 {
+            return self.connect(None);
         }
         let filter = self.filter.pop_front().unwrap();
         let o = self.connect(Some(filter.clone()));

@@ -18,8 +18,10 @@ mod nordvpn;
 mod helper;
 use helper::CurlClient;
 
+#[path = "./proxy/mod.rs"]
 mod proxy;
 use proxy::ProxyState;
+
 mod tokiort;
 
 
@@ -43,7 +45,10 @@ struct CliArgs {
     monitored_hosts: Vec<String>,
     #[arg(short, long)]
     #[clap(default_values_t = Vec::<String>::new())]
-    filter: Vec<String>
+    filter: Vec<String>,
+    #[arg(short, long)]
+    #[clap(default_value_t = 0)]
+    proxy_rotation_interval: u16
 }
 
 
@@ -151,9 +156,12 @@ async fn main() {
     nordvpn.status();
     log::info!("Public IP: {}", curl_client.get("https://api.ipify.org").unwrap());
 
-    let proxy_state = Arc::new(RwLock::new(ProxyState::new(args.monitored_hosts)));
+    log::info!("Monitored hosts: {:?}", args.monitored_hosts);
+    log::info!("Proxy rotation interval: {}", args.proxy_rotation_interval);
+
+    let proxy_state = Arc::new(RwLock::new(ProxyState::new(nordvpn, args.monitored_hosts, args.proxy_rotation_interval)));
     
-    let admin = match Admin::new(curl_client, nordvpn, proxy_state.clone()) {
+    let admin = match Admin::new(curl_client, proxy_state.clone()) {
         Ok(_admin) => _admin,
         Err(err) => {
             log::error!("Failed to create NordAdminVPN instance: {}", err);
@@ -188,34 +196,32 @@ async fn main() {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = proxy::run(proxy_state.clone(),proxy_addr) => {
+            _ = proxy::proxy_functions::run(proxy_state.clone(),proxy_addr) => {
                 // Long work has completed
             }
         }
     });
 
 
+    use tokio::signal::unix::{signal, SignalKind};
 
-  
-     use tokio::signal::unix::{signal, SignalKind};
+    // Infos here:
+    // https://www.gnu.org/software/libc/manual/html_node/Termination-Signals.html
+    let mut signal_terminate = signal(SignalKind::terminate()).unwrap();
+    let mut signal_interrupt = signal(SignalKind::interrupt()).unwrap();
 
-     // Infos here:
-     // https://www.gnu.org/software/libc/manual/html_node/Termination-Signals.html
-     let mut signal_terminate = signal(SignalKind::terminate()).unwrap();
-     let mut signal_interrupt = signal(SignalKind::interrupt()).unwrap();
- 
-     tokio::select! {
-        _ = signal_terminate.recv() => {
-            log::info!("Received SIGTERM.");
-            token.cancel();
-            //proxy_task.abort();
-        },
-         _ = signal_interrupt.recv() => {
-            log::info!("Received SIGINT.");
-            token.cancel();
-            //proxy_task.abort();
-        }
-     };
+    tokio::select! {
+    _ = signal_terminate.recv() => {
+        log::info!("Received SIGTERM.");
+        token.cancel();
+        //proxy_task.abort();
+    },
+        _ = signal_interrupt.recv() => {
+        log::info!("Received SIGINT.");
+        token.cancel();
+        //proxy_task.abort();
+    }
+    };
  
 
     // Wait for tasks to complete
