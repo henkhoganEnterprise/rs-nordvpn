@@ -1,22 +1,27 @@
 use admin::Admin;
+use axum::{self, routing::get};
 use log;
 use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
+
 use std::{collections::{HashMap, HashSet}, io::Write, process::Command, str::FromStr, sync::{Arc, RwLock}, u16, vec};
 use tokio_util::sync::CancellationToken;
 use std::net::SocketAddr;
 
 
+
 #[path = "./admin/mod.rs"]
 mod admin;
+use admin::restapi::router;
 #[path = "./nordvpn/mod.rs"]
 mod nordvpn;
 
 #[path = "./helper/mod.rs"]
 mod helper;
 use helper::CurlClient;
+
 
 #[path = "./proxy/mod.rs"]
 mod proxy;
@@ -174,17 +179,23 @@ async fn main() {
     
     let admin_token = token.clone();
     let admin_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.admin_port)).unwrap();
+    
+    let admin_listener = tokio::net::TcpListener::bind(admin_addr).await.unwrap();
+    let admin_router = router(Arc::new(admin));
+
+    
     let admin_task = tokio::spawn(async move {
         tokio::select! {
             _ = admin_token.cancelled() => {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = admin::run(admin_addr, admin) => {
+            _ = axum::serve(admin_listener, admin_router.into_make_service()) => {
                 // Long work has completed
             }
         }
     });
+
 
 
     let proxy_token = token.clone();

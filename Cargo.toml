@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+axum = { version = "0.7.9", features = ["macros"] } 
 chrono = "0.4.38"
 clap = { version = "4.0", features = ["derive"] } 
 env_logger = "0.11.3"
@@ -17,5 +18,9 @@ route-recognizer = "0.3.1"
 serde = { version = "1.0.120", features = ["default"] }
 serde_derive = "1.0"
 serde_json = { version = "1.0.120", features = ["default"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.42.0", features = ["full"] }
 tokio-util = "*"
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.1"
+utoipa-swagger-ui = { version = "*" ,features = ["axum"] }
+
