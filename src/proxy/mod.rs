@@ -27,8 +27,9 @@ type RunReturnType = Result<(), Box<dyn std::error::Error>>;
 
 */
 #[derive(Serialize, Deserialize)]
+//#[derive(utoipa::ToSchema)]
 pub struct ProxyStatus {
-    drained: bool,
+    pub drained: bool,
     inbound_connections: HashMap<String, SystemTime>,
     inflight_connection_count: u16,
     inflight_connect_requests: u16,
@@ -36,6 +37,7 @@ pub struct ProxyStatus {
 }
 
 #[derive(Serialize, Deserialize)]
+//#[derive(utoipa::ToSchema)]
 pub struct ProxyStatusCompact {
     drained: bool,
     inbound_connections: HashMap<String, SystemTime>,
@@ -49,11 +51,30 @@ pub struct ProxyStatusSanitizerResult {
 }
 
 #[derive(Serialize, Deserialize)]
+//#[derive(utoipa::ToSchema)]
 pub struct ProxyRotateResult {
     last_rotation: SystemTime
 }
 
 #[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
+pub struct ProxySettingsDrainUpdate {
+    before: bool,
+    after: bool,
+}
+impl ProxySettingsDrainUpdate {
+    pub fn new(before: bool, after: bool) -> Self {
+        ProxySettingsDrainUpdate {
+            before,
+            after
+        }
+    }
+    
+}
+
+
+#[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
 pub struct ProxySettingsRotationIntervalUpdate {
     before: u16,
     after: u16,

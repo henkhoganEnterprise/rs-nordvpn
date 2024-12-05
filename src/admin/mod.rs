@@ -71,11 +71,8 @@ pub mod restapi {
     
     
     use utoipa_swagger_ui::SwaggerUi;
-    use utoipa::OpenApi;
-    
 
-
-    use crate::proxy::ProxyStatusCompact;
+    use crate::{nordvpn::{NordVpnStatusOutput, NordVpnConnectOutput, NordVpnDisconnectOutput}, proxy::{ProxyStatus, ProxyStatusCompact, ProxySettingsDrainUpdate}};
 
     use super::super::Admin;
 
@@ -85,17 +82,6 @@ pub mod restapi {
     };
 
     const IP_URL: &str = "https://api.ipify.org";
-
-    #[derive(OpenApi)]
-    #[openapi(
-        //modifiers(&SecurityAddon),
-        tags(
-            (name = "blabla", description = "Todo items management API")
-        )
-    )]
-    struct ApiDoc;
-
-
     type AdminState = Arc<Admin>;
 
     pub(super) fn admin_router(admin_state: AdminState) -> OpenApiRouter {
@@ -103,6 +89,13 @@ pub mod restapi {
             .routes(routes!(get_rotation))
             .routes(routes!(set_rotation))
             .routes(routes!(get_public_ip))
+            //.routes(routes!(search_todos))
+            //.routes(routes!(mark_done, delete_todo))
+            .with_state(admin_state);
+    }
+
+    pub(super) fn nordvpn_router(admin_state: AdminState) -> OpenApiRouter {
+        return OpenApiRouter::new()
             .routes(routes!(nordvpn_account))
             .routes(routes!(nordvpn_connect))
             .routes(routes!(nordvpn_connect_with_argument))
@@ -116,27 +109,32 @@ pub mod restapi {
             .routes(routes!(nordvpn_daemon_restart))
             .routes(routes!(nordvpn_daemon_start))
             .routes(routes!(nordvpn_daemon_stop))
+            .with_state(admin_state);
+    }
+
+    pub(super) fn proxy_router(admin_state: AdminState) -> OpenApiRouter {
+        return OpenApiRouter::new()
             .routes(routes!(proxy_rotate))
             .routes(routes!(proxy_settings))
+            .routes(routes!(proxy_settings_drain))
             .routes(routes!(proxy_settings_rotation))
             .routes(routes!(proxy_settings_rotation_interval))
             .routes(routes!(proxy_status))
             .routes(routes!(proxy_status_purge))
             .routes(routes!(proxy_status_compact))
-
-            //.routes(routes!(search_todos))
-            //.routes(routes!(mark_done, delete_todo))
             .with_state(admin_state);
     }
 
     pub fn router(admin_state: AdminState) -> Router {
 
-        let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .nest("/api/admin", admin_router(admin_state))
+        let (router, api) = OpenApiRouter::new()
+        .nest("/api/admin", admin_router(admin_state.clone()))
+        .nest("/api/nordvpn", nordvpn_router(admin_state.clone()))
+        .nest("/api/proxy", proxy_router(admin_state))
         .split_for_parts();
 
         let router = router
-            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()));
+            .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", api.clone()));
             /*
             .merge(Redoc::with_url("/redoc", api.clone()))
             // There is no need to create `RapiDoc::with_openapi` because the OpenApi is served
@@ -207,83 +205,92 @@ pub mod restapi {
 
     #[utoipa::path(
         get,
-        path = "/nordvpn/account",
+        path = "/account",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
         )
     )]
     async fn nordvpn_account(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", admin_state.proxy.read().unwrap().nordvpn.account()))
+        Json(admin_state.proxy.read().unwrap().nordvpn.account().unwrap())
     }
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/connect",
+        path = "/connect",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = NordVpnConnectOutput)
         )
     )]
-    async fn nordvpn_connect(State(admin_state): State<AdminState>) -> Json<String> {
+    async fn nordvpn_connect(State(admin_state): State<AdminState>) -> Json<NordVpnConnectOutput> {
         admin_state.proxy.write().unwrap().drain();
-        let resp = serde_json::to_string(&admin_state.proxy.read().unwrap().nordvpn.connect(None)).unwrap();
+        let resp = admin_state.proxy.read().unwrap().nordvpn.connect(None);
         admin_state.proxy.write().unwrap().activate();
-        Json(resp)
+        match resp {
+            Ok(output) => {
+                return Json(output)
+            },
+            Err(e) => {
+                return Json(e)
+            }
+        }
     }
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/connect/{argument}",
+        path = "/connect/{argument}",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = NordVpnConnectOutput)
         ),
         params(
             ("argument"  = String, Path, description = "Argument for connection")
         )
     )]
-    async fn nordvpn_connect_with_argument(Path(argument): Path<String>, State(admin_state): State<AdminState>) -> Json<String> {
-        let output = match admin_state.proxy.read().unwrap().nordvpn.connect(Some(argument.clone())) {
+    async fn nordvpn_connect_with_argument(Path(argument): Path<String>, State(admin_state): State<AdminState>) -> Json<NordVpnConnectOutput> {
+        match admin_state.proxy.read().unwrap().nordvpn.connect(Some(argument.clone())) {
             Ok(output) => {
-                log::info!("Connected with argument: {:?}", argument);
-                serde_json::to_string(&output).unwrap()
+                return Json(output)
             },
             Err(e) => {
-                log::error!("Failed to connect with argument: {:?}", argument);
-                format!("Failed to connect with argument: {:?}", e)
+                return Json(e)
             }
-        };
-        Json(output)
+        }
     }
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/disconnect",
+        path = "/disconnect",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = NordVpnDisconnectOutput)
         )
     )]
-    async fn nordvpn_disconnect(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", admin_state.proxy.read().unwrap().nordvpn.disconnect()))
+    async fn nordvpn_disconnect(State(admin_state): State<AdminState>) -> Json<NordVpnDisconnectOutput> {
+        match admin_state.proxy.read().unwrap().nordvpn.disconnect() {
+            Ok(output) => Json(output),
+            Err(err) => {
+                Json(err)
+            }
+        }
     }
 
     #[utoipa::path(
         get,
-        path = "/nordvpn/logs",
+        path = "/logs",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = Vec<u8>)
         )
     )]
-    async fn nordvpn_logs(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.proxy.read().unwrap().nordvpn.logs(10)).unwrap())
+    async fn nordvpn_logs(State(admin_state): State<AdminState>) -> Json<Vec<u8>> {
+        Json(admin_state.proxy.read().unwrap().nordvpn.logs(10))
     }
 
     #[utoipa::path(
         get,
-        path = "/nordvpn/logs/{lines}",
+        path = "/logs/{lines}",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -298,10 +305,10 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/rotate",
+        path = "/rotate",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = String)
         )
     )]
     async fn nordvpn_rotate(State(admin_state): State<AdminState>) -> Json<String> {
@@ -310,33 +317,33 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/sanitize",
+        path = "/sanitize",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = String)
         )
     )]
-    async fn nordvpn_sanitize(State(admin_state): State<AdminState>) -> Json<String> {
+    async fn nordvpn_sanitize(State(admin_state): State<AdminState>) -> Json<ProxyStatus> {
         let retention = Some(60);
         admin_state.proxy.write().unwrap().sanitize(retention);
-        Json(serde_json::to_string(&admin_state.proxy.read().unwrap().status()).unwrap())
+        return Json(admin_state.proxy.read().unwrap().status());
     }
 
     #[utoipa::path(
         get,
-        path = "/nordvpn/status",
+        path = "/status",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = NordVpnStatusOutput)
         )
     )]
-    async fn nordvpn_status(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.proxy.read().unwrap().nordvpn.status()).unwrap())
+    async fn nordvpn_status(State(admin_state): State<AdminState>) -> Json<NordVpnStatusOutput> {
+        Json(admin_state.proxy.read().unwrap().nordvpn.status())
     }
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/daemon/restart",
+        path = "/daemon/restart",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -348,7 +355,7 @@ pub mod restapi {
 
     #[utoipa::path(
         get,
-        path = "/nordvpn/daemon/status",
+        path = "/daemon/status",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -360,7 +367,7 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/daemon/start",
+        path = "/daemon/start",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -372,7 +379,7 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/nordvpn/daemon/stop",
+        path = "/daemon/stop",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -384,7 +391,7 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/proxy/rotate",
+        path = "/rotate",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -397,7 +404,7 @@ pub mod restapi {
 
     #[utoipa::path(
         get,
-        path = "/proxy/settings",
+        path = "/settings",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -409,7 +416,7 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/proxy/settings/rotation/interval/{interval}",
+        path = "/settings/rotation/interval/{interval}",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -424,8 +431,36 @@ pub mod restapi {
     }
 
     #[utoipa::path(
+        post,
+        path = "/settings/drain/{drain}",
+        //tag = TODO_TAG,
+        responses(
+            (status = 200, description = "List all todos successfully", body = ProxySettingsDrainUpdate)
+        ),
+        params(
+            ("interval"  = bool, Path, description = "Interval for rotation")
+        )
+    )]
+    async fn proxy_settings_drain(Path(drain): Path<bool>, State(admin_state): State<AdminState>) -> Json<ProxySettingsDrainUpdate> {
+        let before = admin_state.proxy.read().unwrap().status().drained;
+        if drain {
+            admin_state.proxy.write().unwrap().drain();
+        } else {
+            admin_state.proxy.write().unwrap().activate();
+        }
+        Json(
+            ProxySettingsDrainUpdate::new(  
+                before,
+                admin_state.proxy.read().unwrap().status().drained
+            )
+        )
+    }
+
+
+
+    #[utoipa::path(
         get,
-        path = "/proxy/status",
+        path = "/status",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -437,7 +472,7 @@ pub mod restapi {
 
     #[utoipa::path(
         post,
-        path = "/proxy/status/purge",
+        path = "/status/purge",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -449,7 +484,7 @@ pub mod restapi {
 
     #[utoipa::path(
         get,
-        path = "/proxy/status/compact",
+        path = "/status/compact",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
@@ -464,7 +499,7 @@ pub mod restapi {
 
     #[utoipa::path(
         get,
-        path = "/proxy/settings/rotation",
+        path = "/settings/rotation",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])

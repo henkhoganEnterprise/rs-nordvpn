@@ -1,5 +1,4 @@
 use admin::Admin;
-use axum::{self, routing::get};
 use log;
 use clap::Parser;
 use chrono::Local;
@@ -153,9 +152,9 @@ async fn main() {
 
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
-    nordvpn.account();
+    let _ = nordvpn.account();
     if let Err(e) = nordvpn.connect(None) {
-        log::error!("{:?}", e);
+        log::error!("{:?}", e.error);
         std::process::exit(1)
     }
     nordvpn.status();
