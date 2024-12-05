@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 
 #[path = "./admin/mod.rs"]
 mod admin;
+use admin::ClusterTouchpoint;
 use admin::restapi::router;
 #[path = "./nordvpn/mod.rs"]
 mod nordvpn;
@@ -52,7 +53,10 @@ struct CliArgs {
     filter: Vec<String>,
     #[arg(short, long)]
     #[clap(default_value_t = 0)]
-    proxy_rotation_interval: u16
+    proxy_rotation_interval: u16,
+    #[arg(short, long)]
+    #[clap(default_values_t = Vec::<ClusterTouchpoint>::new())]
+    cluster_touchpoints: Vec<ClusterTouchpoint>,
 }
 
 
@@ -165,7 +169,7 @@ async fn main() {
 
     let proxy_state = Arc::new(RwLock::new(ProxyState::new(nordvpn, args.monitored_hosts, args.proxy_rotation_interval)));
     
-    let admin = match Admin::new(curl_client, proxy_state.clone()) {
+    let admin = match Admin::new(curl_client, proxy_state.clone(), HashSet::from_iter(args.cluster_touchpoints), args.admin_port.clone()) {
         Ok(_admin) => _admin,
         Err(err) => {
             log::error!("Failed to create NordAdminVPN instance: {}", err);

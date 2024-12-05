@@ -1,10 +1,14 @@
 #![deny(warnings)]
 
-use std::sync::{Arc, RwLock};
+use std::{collections::HashSet, sync::{Arc, RwLock}};
+use gethostname::gethostname;
+use uuid::Uuid;
+use local_ip_address::local_ip;
 
 
 
 use helper::CurlClient;
+use serde::{Deserialize, Serialize};
 
 
 #[path = "../benches/support/mod.rs"]
@@ -15,21 +19,65 @@ mod support;
 
 use crate::{helper, proxy};
 
+type ClusterNodeId = String;
+pub type ClusterTouchpoint = String;
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Eq, PartialEq, Hash)]
+pub struct ClusterNode {
+    id: ClusterNodeId,
+    host: String,
+    ip: String,
+    port: u16,
+}
+impl ClusterNode {
+    pub fn new(id: ClusterNodeId, host: String, ip: String, port: u16) -> Self {
+        Self {
+            id,
+            host: host,
+            ip,
+            port,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
+pub struct Cluster {
+    master: Option<ClusterNodeId>,
+    touchpoints: HashSet<ClusterTouchpoint>,
+    nodes: HashSet<ClusterNode>,
+}
 
 #[derive(Debug, Clone)]
 pub struct Admin {
     curl_client: CurlClient,
+    cluster: Cluster,
     proxy:Arc<RwLock<proxy::ProxyState>>,
 }
 
 
 impl Admin {
-    pub fn new(curl_client: CurlClient, proxy: Arc<RwLock<proxy::ProxyState>>) -> Result<Self, &'static str> {
+    pub fn new(curl_client: CurlClient, proxy: Arc<RwLock<proxy::ProxyState>>, cluster_touchpoints: HashSet<ClusterTouchpoint>, port: u16) -> Result<Self, &'static str> {
 
         log::info!("Creating new Admin instance");
 
         return Ok(Self {
             curl_client,
+            cluster: Cluster {
+                master: None,
+                touchpoints: cluster_touchpoints,
+                nodes: {
+                    let mut nodes = HashSet::new();
+                    nodes.insert(ClusterNode::new(
+                        Uuid::new_v4().to_string(),
+                        gethostname().to_str().unwrap().to_string(),
+                        local_ip().unwrap().to_string(),
+                        port,
+                    ));
+                    nodes
+                },
+            },
             proxy,
         });
     }
@@ -74,6 +122,7 @@ pub mod restapi {
 
     use crate::{nordvpn::{NordVpnStatusOutput, NordVpnConnectOutput, NordVpnDisconnectOutput}, proxy::{ProxyStatus, ProxyStatusCompact, ProxySettingsDrainUpdate}};
 
+    use super::Cluster;
     use super::super::Admin;
 
     use axum::{
@@ -89,10 +138,15 @@ pub mod restapi {
             .routes(routes!(get_rotation))
             .routes(routes!(set_rotation))
             .routes(routes!(get_public_ip))
-            //.routes(routes!(search_todos))
-            //.routes(routes!(mark_done, delete_todo))
             .with_state(admin_state);
     }
+
+    pub(super) fn cluster_router(admin_state: AdminState) -> OpenApiRouter {
+        return OpenApiRouter::new()
+            .routes(routes!(get_cluster))
+            .with_state(admin_state);
+    }
+
 
     pub(super) fn nordvpn_router(admin_state: AdminState) -> OpenApiRouter {
         return OpenApiRouter::new()
@@ -129,6 +183,7 @@ pub mod restapi {
 
         let (router, api) = OpenApiRouter::new()
         .nest("/api/admin", admin_router(admin_state.clone()))
+        .nest("/api/cluster", cluster_router(admin_state.clone()))
         .nest("/api/nordvpn", nordvpn_router(admin_state.clone()))
         .nest("/api/proxy", proxy_router(admin_state))
         .split_for_parts();
@@ -196,11 +251,23 @@ pub mod restapi {
         path = "/ip/public",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = String)
         )
     )]
     async fn get_public_ip(State(admin_state): State<AdminState>) -> Json<String> {
         Json(admin_state.curl_client.get(IP_URL).unwrap())
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/state",
+        //tag = TODO_TAG,
+        responses(
+            (status = 200, description = "Show cluster state", body = Cluster)
+        )
+    )]
+    async fn get_cluster(State(admin_state): State<AdminState>) -> Json<Cluster> {
+        return Json(admin_state.cluster.clone());
     }
 
     #[utoipa::path(
