@@ -4,19 +4,24 @@ use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
+
 use std::{collections::{HashMap, HashSet}, io::Write, process::Command, str::FromStr, sync::{Arc, RwLock}, u16, vec};
 use tokio_util::sync::CancellationToken;
 use std::net::SocketAddr;
 
 
+
 #[path = "./admin/mod.rs"]
 mod admin;
+use admin::ClusterTouchpoint;
+use admin::restapi::router;
 #[path = "./nordvpn/mod.rs"]
 mod nordvpn;
 
 #[path = "./helper/mod.rs"]
 mod helper;
 use helper::CurlClient;
+
 
 #[path = "./proxy/mod.rs"]
 mod proxy;
@@ -48,7 +53,10 @@ struct CliArgs {
     filter: Vec<String>,
     #[arg(short, long)]
     #[clap(default_value_t = 0)]
-    proxy_rotation_interval: u16
+    proxy_rotation_interval: u16,
+    #[arg(short, long)]
+    #[clap(default_values_t = Vec::<ClusterTouchpoint>::new())]
+    cluster_touchpoints: Vec<ClusterTouchpoint>,
 }
 
 
@@ -148,9 +156,9 @@ async fn main() {
 
     log::info!("NordVPN version: {}", nordvpn.version());
     nordvpn.login();
-    nordvpn.account();
+    let _ = nordvpn.account();
     if let Err(e) = nordvpn.connect(None) {
-        log::error!("{:?}", e);
+        log::error!("{:?}", e.error);
         std::process::exit(1)
     }
     nordvpn.status();
@@ -161,7 +169,7 @@ async fn main() {
 
     let proxy_state = Arc::new(RwLock::new(ProxyState::new(nordvpn, args.monitored_hosts, args.proxy_rotation_interval)));
     
-    let admin = match Admin::new(curl_client, proxy_state.clone()) {
+    let admin = match Admin::new(curl_client, proxy_state.clone(), HashSet::from_iter(args.cluster_touchpoints), args.admin_port.clone()) {
         Ok(_admin) => _admin,
         Err(err) => {
             log::error!("Failed to create NordAdminVPN instance: {}", err);
@@ -174,17 +182,23 @@ async fn main() {
     
     let admin_token = token.clone();
     let admin_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.admin_port)).unwrap();
+    
+    let admin_listener = tokio::net::TcpListener::bind(admin_addr).await.unwrap();
+    let admin_router = router(Arc::new(admin));
+
+    
     let admin_task = tokio::spawn(async move {
         tokio::select! {
             _ = admin_token.cancelled() => {
                 // The token was cancelled, task can shut down
                 log::info!("Proxy task was cancelled");
             }
-            _ = admin::run(admin_addr, admin) => {
+            _ = axum::serve(admin_listener, admin_router.into_make_service()) => {
                 // Long work has completed
             }
         }
     });
+
 
 
     let proxy_token = token.clone();

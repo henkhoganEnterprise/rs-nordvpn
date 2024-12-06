@@ -27,8 +27,9 @@ type RunReturnType = Result<(), Box<dyn std::error::Error>>;
 
 */
 #[derive(Serialize, Deserialize)]
+//#[derive(utoipa::ToSchema)]
 pub struct ProxyStatus {
-    drained: bool,
+    pub drained: bool,
     inbound_connections: HashMap<String, SystemTime>,
     inflight_connection_count: u16,
     inflight_connect_requests: u16,
@@ -36,6 +37,7 @@ pub struct ProxyStatus {
 }
 
 #[derive(Serialize, Deserialize)]
+//#[derive(utoipa::ToSchema)]
 pub struct ProxyStatusCompact {
     drained: bool,
     inbound_connections: HashMap<String, SystemTime>,
@@ -49,16 +51,41 @@ pub struct ProxyStatusSanitizerResult {
 }
 
 #[derive(Serialize, Deserialize)]
+//#[derive(utoipa::ToSchema)]
 pub struct ProxyRotateResult {
     last_rotation: SystemTime
+}
+
+#[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
+pub struct ProxySettingsDrainUpdate {
+    before: bool,
+    after: bool,
+}
+impl ProxySettingsDrainUpdate {
+    pub fn new(before: bool, after: bool) -> Self {
+        ProxySettingsDrainUpdate {
+            before,
+            after
+        }
+    }
+    
+}
+
+
+#[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
+pub struct ProxySettingsRotationIntervalUpdate {
+    before: u16,
+    after: u16,
 }
 
 
 #[derive(Debug, Clone)]
 #[derive(Serialize, Deserialize)]
 pub struct ProxySetting {
-    rotation_interval: u16,
-    monitored_hosts: Vec<String>,
+    pub rotation_interval: u16,
+    pub monitored_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +96,7 @@ pub struct ProxyState {
     inflight_connections: u16,
     inflight_connect_requests: u16,
     monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>,
-    rotation_interval: u16,
+    //rotation_interval: u16,
     last_rotation: SystemTime,
     //sanitizer: Option<JoinHandle<ProxyStatusSanitizerResult>>,
     pub settings: ProxySetting,
@@ -84,7 +111,7 @@ impl ProxyState {
             inflight_connections: 0,
             inflight_connect_requests: 0,
             monitored_hosts: monitored_hosts.iter().map(|host| (host.clone(), (None, vec![]))).collect(),
-            rotation_interval: rotation_interval,
+            //rotation_interval: rotation_interval,
             last_rotation: SystemTime::now(),
             settings: ProxySetting {
                 rotation_interval: rotation_interval,
@@ -94,7 +121,7 @@ impl ProxyState {
     }
 
     pub fn compact_status(&self) -> ProxyStatusCompact {
-        ProxyStatusCompact {
+        return ProxyStatusCompact {
             drained: self.drained,
             inbound_connections: self.inbound_connections.clone(),
             inflight_connections: self.inflight_connections,
@@ -159,12 +186,17 @@ impl ProxyState {
         self.drained = false;
     }
 
-    pub fn set_rotation_interval(&mut self, interval: u16) {
-        self.rotation_interval = interval;
+    pub fn set_rotation_interval(&mut self, interval: u16) -> ProxySettingsRotationIntervalUpdate {
+        let before = self.settings.rotation_interval;
+        self.settings.rotation_interval = interval;
+        ProxySettingsRotationIntervalUpdate {
+            before: before,
+            after: interval
+        }
     }
 
     fn rotate_if_needed(&mut self) -> bool {
-        if self.rotation_interval > 0 && self.last_rotation.elapsed().unwrap().as_secs() > self.rotation_interval as u64 {
+        if self.settings.rotation_interval > 0 && self.last_rotation.elapsed().unwrap().as_secs() > self.settings.rotation_interval as u64 {
             self.rotate();
             return true;
         }

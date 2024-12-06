@@ -7,20 +7,27 @@ use serde_derive::{Deserialize, Serialize};
 mod daemon;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
 pub enum Error {
+    AccountCommandFailed,
     ConnectFailed,
-    FilterDisabled
+    FilterDisabled,
+    ParseFailed
 }
 
 #[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
+
 pub struct NordVpnConnectOutput {
     pub connected: bool,
     pub group: String,
     pub server_id: String,
-    pub server_fqdn: String
+    pub server_fqdn: String,
+    pub error: Option<Error>
 }
 
 #[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
 pub struct NordVpnStatusOutput {
     pub connected: bool,
     pub server: String,
@@ -34,6 +41,11 @@ pub struct NordVpnStatusOutput {
     pub uptime: String
 }
 
+#[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
+pub struct NordVpnDisconnectOutput {
+    pub disconnected: bool
+}
 
 #[derive(Debug, Clone)]
 pub struct NordVPN {
@@ -81,15 +93,16 @@ impl NordVPN {
         }
     }
 
-    pub fn account(&self) -> bool {
+    pub fn account(&self) -> Result<String, Error> {
         log::debug!("Checking NordVPN account...");
         let output = self._nordvpn_command(vec!["account".to_string()]);
         if output.0 {
             log::info!("Account: {}", output.1);
+            return Ok(output.1);
         } else {
             log::error!("Failed to fetch account: {}", output.1);
+            return Err(Error::AccountCommandFailed);
         }
-        output.0
     }
 
     fn parse_connect_output(&self, output: String) -> NordVpnConnectOutput {
@@ -121,7 +134,8 @@ impl NordVPN {
                     connected: true,
                     group,
                     server_id,
-                    server_fqdn
+                    server_fqdn,
+                    error: None
                 };
             }
             if line.contains(not_connected_substring) {
@@ -129,7 +143,8 @@ impl NordVPN {
                     connected: false,
                     group: "".to_string(),
                     server_id: "".to_string(),
-                    server_fqdn: "".to_string()
+                    server_fqdn: "".to_string(),
+                    error: Some(Error::ConnectFailed)
                 };
             }
         }
@@ -141,13 +156,15 @@ impl NordVPN {
             connected: false,
             group: "".to_string(),
             server_id: "".to_string(),
-            server_fqdn: "".to_string()
+            server_fqdn: "".to_string(),
+            error: Some(Error::ParseFailed)
+
         };
     
         
     }
 
-    pub fn connect(&self, filter: Option<String>) -> Result<NordVpnConnectOutput, Error> {
+    pub fn connect(&self, filter: Option<String>) -> Result<NordVpnConnectOutput, NordVpnConnectOutput> {
         log::debug!("Connecting to NordVPN...");
         let output = match filter {
             Some(filter) => self._nordvpn_command(vec!["connect".to_string(), filter]),
@@ -158,18 +175,29 @@ impl NordVPN {
             return Ok(self.parse_connect_output(output.1));
         } 
         log::error!("Failed to connect: {}", output.1.clone());
-        return Err(Error::ConnectFailed);
+        return Err(NordVpnConnectOutput {
+            connected: false,
+            group: "".to_string(),
+            server_id: "".to_string(),
+            server_fqdn: "".to_string(),
+            error: Some(Error::ConnectFailed)
+        });
     }
 
-    pub fn disconnect(&self) -> bool {
+    pub fn disconnect(&self) -> Result<NordVpnDisconnectOutput, NordVpnDisconnectOutput> {
         log::debug!("Disconnecting from NordVPN...");
         let output = self._nordvpn_command(vec!["disconnect".to_string()]);
         if output.0 {
             log::info!("Disonnected: {}", output.1);
+            return Ok(NordVpnDisconnectOutput {
+                disconnected: true
+            });
         } else {
             log::error!("Failed to disconnect: {}", output.1);
+            return Err(NordVpnDisconnectOutput {
+                disconnected: false
+            });
         }
-        output.0
     }
 
     pub fn login(&self) -> bool {
@@ -218,7 +246,7 @@ impl NordVPN {
             .stdout
     }
 
-    pub fn rotate(&mut self) -> Result<NordVpnConnectOutput, Error> {
+    pub fn rotate(&mut self) -> Result<NordVpnConnectOutput, NordVpnConnectOutput> {
         if !self.filter_enabled || self.filter.len() == 0 {
             return self.connect(None);
         }
@@ -390,7 +418,7 @@ impl NordVPN {
 
 impl Drop for NordVPN {
     fn drop(&mut self) {
-        self.disconnect();
+        let _ = self.disconnect();
         log::info!("Dropping NordVPN instance");
     }
 }
