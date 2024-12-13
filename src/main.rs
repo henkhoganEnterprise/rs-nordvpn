@@ -25,7 +25,7 @@ use helper::CurlClient;
 
 #[path = "./proxy/mod.rs"]
 mod proxy;
-use proxy::ProxyState;
+use proxy::{ProxyRotationMode, ProxyState, TimedProxyRotation};
 
 mod tokiort;
 
@@ -53,7 +53,7 @@ struct CliArgs {
     filter: Vec<String>,
     #[arg(short, long)]
     #[clap(default_value_t = 0)]
-    proxy_rotation_interval: u16,
+    proxy_rotation_argument: u64,
     #[arg(short, long)]
     #[clap(default_values_t = Vec::<ClusterTouchpoint>::new())]
     cluster_touchpoints: Vec<ClusterTouchpoint>,
@@ -165,9 +165,14 @@ async fn main() {
     log::info!("Public IP: {}", curl_client.get("https://api.ipify.org").unwrap());
 
     log::info!("Monitored hosts: {:?}", args.monitored_hosts);
-    log::info!("Proxy rotation interval: {}", args.proxy_rotation_interval);
+    log::info!("Proxy rotation argument: {}", args.proxy_rotation_argument);
 
-    let proxy_state = Arc::new(RwLock::new(ProxyState::new(nordvpn, args.monitored_hosts, args.proxy_rotation_interval)));
+    let mut proxy_rotation = ProxyRotationMode::Manual;
+    if args.proxy_rotation_argument > 0 {
+        proxy_rotation = ProxyRotationMode::Timed(TimedProxyRotation::new(args.proxy_rotation_argument));
+    }
+
+    let proxy_state = Arc::new(RwLock::new(ProxyState::new(nordvpn, args.monitored_hosts, proxy_rotation)));
     
     let admin = match Admin::new(curl_client, proxy_state.clone(), HashSet::from_iter(args.cluster_touchpoints), args.admin_port.clone()) {
         Ok(_admin) => _admin,

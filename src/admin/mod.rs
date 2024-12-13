@@ -114,13 +114,14 @@ impl Admin {
 pub mod restapi {
     use std::sync::Arc;
     use axum::{extract::Path, Router};
+    use http::StatusCode;
     use utoipa_axum::router::OpenApiRouter;
     use utoipa_axum::routes;
     
     
     use utoipa_swagger_ui::SwaggerUi;
 
-    use crate::{nordvpn::{NordVpnStatusOutput, NordVpnConnectOutput, NordVpnDisconnectOutput}, proxy::{ProxyStatus, ProxyStatusCompact, ProxySettingsDrainUpdate}};
+    use crate::{nordvpn::{NordVpnConnectOutput, NordVpnDisconnectOutput, NordVpnStatusOutput}, proxy::{ProxyRotateResult, ProxyRotationMode, ProxySettingsDrainUpdate, ProxyStatus, ProxyStatusCompact, RequestCountProxyRotation}};
 
     use super::Cluster;
     use super::super::Admin;
@@ -176,6 +177,8 @@ pub mod restapi {
             .routes(routes!(proxy_status))
             .routes(routes!(proxy_status_purge))
             .routes(routes!(proxy_status_compact))
+            .routes(routes!(proxy_settings_rotation_set_requestcount))
+            .routes(routes!(proxy_health))
             .with_state(admin_state);
     }
 
@@ -457,16 +460,34 @@ pub mod restapi {
     }
 
     #[utoipa::path(
+        get,
+        path = "/health",
+        //tag = TODO_TAG,
+        responses(
+            (status = 200, description = "Proxy is up", body = String),
+            (status = 503, description = "Proxy is out of service", body = String)
+        )
+    )]
+    async fn proxy_health(State(admin_state): State<AdminState>) -> (StatusCode, Json<String>) {
+        match admin_state.proxy.read().unwrap().drained {
+            false => (StatusCode::OK, Json("Proxy is up".to_string())),
+            true => (StatusCode::SERVICE_UNAVAILABLE, Json("Proxy is out of service".to_string())),
+        }
+    }
+
+    #[utoipa::path(
         post,
         path = "/rotate",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = ProxyRotateResult),
+            (status = 500, description = "List all todos successfully", body = ProxyRotateResult)
         )
     )]
-    async fn proxy_rotate(State(admin_state): State<AdminState>) -> Json<String> {
-        let resp = serde_json::to_string(&admin_state.proxy.write().unwrap().rotate()).unwrap();
-        Json(resp)
+    async fn proxy_rotate(State(admin_state): State<AdminState>) -> Json<ProxyRotateResult> {
+        match admin_state.proxy.write().unwrap().rotate() {
+            Ok(result) => Json(result),
+            Err(err) => Json(err),}
     }
 
     #[utoipa::path(
@@ -505,7 +526,7 @@ pub mod restapi {
             (status = 200, description = "List all todos successfully", body = ProxySettingsDrainUpdate)
         ),
         params(
-            ("interval"  = bool, Path, description = "Interval for rotation")
+            ("drain"  = bool, Path, description = "Interval for rotation")
         )
     )]
     async fn proxy_settings_drain(Path(drain): Path<bool>, State(admin_state): State<AdminState>) -> Json<ProxySettingsDrainUpdate> {
@@ -557,23 +578,36 @@ pub mod restapi {
             (status = 200, description = "List all todos successfully", body = [String])
         )
     )]
-
     async fn proxy_status_compact(State(admin_state): State<AdminState>) -> Json<ProxyStatusCompact> {
         return Json(admin_state.proxy.read().unwrap().compact_status());
     }
-
-
 
     #[utoipa::path(
         get,
         path = "/settings/rotation",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = String)
         )
     )]
-    async fn proxy_settings_rotation(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.proxy.read().unwrap().settings.rotation_interval).unwrap())
+    async fn proxy_settings_rotation(State(admin_state): State<AdminState>) -> Json<ProxyRotationMode> {
+        Json(admin_state.proxy.read().unwrap().settings.rotation.clone())
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/settings/rotation/requestcount/{count}",
+        responses(
+            (status = 200, description = "List all todos successfully", body = String)
+        ),
+        params(
+            ("count"  = u16, Path, description = "Interval for rotation")
+        )
+    )]
+    async fn proxy_settings_rotation_set_requestcount(Path(count): Path<u16>, State(admin_state): State<AdminState>) -> Json<ProxyRotationMode> {
+        let rotation = ProxyRotationMode::RequestCount(RequestCountProxyRotation::new(count));
+        admin_state.proxy.write().unwrap().settings.rotation = rotation.clone();
+        Json(rotation)
     }
 
 }

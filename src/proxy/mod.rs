@@ -4,10 +4,11 @@
 #![deny(warnings)]
 
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 
 
 use serde_derive::{Deserialize, Serialize};
+use utoipa::schema;
 
 use crate::nordvpn::NordVPN;
 
@@ -51,9 +52,22 @@ pub struct ProxyStatusSanitizerResult {
 }
 
 #[derive(Serialize, Deserialize)]
-//#[derive(utoipa::ToSchema)]
+#[derive(Debug, Clone)]
+#[derive(utoipa::ToSchema)]
+#[schema(as = SystemTime, value_type = String)]
+pub struct SchemaCompatibleSystemTime(SystemTime);
+impl SchemaCompatibleSystemTime {
+    pub fn now() -> Self {
+        SchemaCompatibleSystemTime(SystemTime::now())
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+#[derive(utoipa::ToSchema)]
 pub struct ProxyRotateResult {
-    last_rotation: SystemTime
+    success: bool,
+    last_rotation: SchemaCompatibleSystemTime
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,6 +86,101 @@ impl ProxySettingsDrainUpdate {
     
 }
 
+trait ProxyRotation {
+    fn call(&mut self, rotation_callback: impl FnOnce() -> Result<ProxyRotateResult, ProxyRotateResult>) -> Result<bool, ProxyRotateResult>;
+}
+
+#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize)]
+pub struct TimedProxyRotation {
+    pub interval: Duration,
+    pub last_rotation: SystemTime,
+    pub next_rotation: SystemTime
+}
+impl TimedProxyRotation {
+    pub fn new(interval: u64) -> Self {
+        let now = SystemTime::now();
+        let interval = std::time::Duration::from_secs(interval);
+        TimedProxyRotation {
+            interval: interval,
+            last_rotation: now,
+            next_rotation: now + interval
+        }
+    }
+}
+
+impl ProxyRotation for TimedProxyRotation {
+    fn call(&mut self, rotation_callback: impl FnOnce() -> Result<ProxyRotateResult, ProxyRotateResult>) -> Result<bool, ProxyRotateResult> {
+        if SystemTime::now() > self.next_rotation {
+            match rotation_callback() {
+                Ok(_) => {
+                    self.last_rotation = SystemTime::now();
+                    self.next_rotation = self.last_rotation + self.interval;
+                    Ok(true)
+                },
+                Err(e) => Err(e)
+            }
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize)]
+pub struct RequestCountProxyRotation {
+    request_count: u16,
+    rotation_count: u16,
+    last_rotation: SystemTime
+}
+
+impl RequestCountProxyRotation {
+    pub fn new(rotation_count: u16) -> Self {
+        RequestCountProxyRotation {
+            request_count: 0,
+            rotation_count: rotation_count,
+            last_rotation: SystemTime::now()
+        }
+    }
+}
+
+impl ProxyRotation for RequestCountProxyRotation {
+    fn call(&mut self, rotation_callback: impl FnOnce() -> Result<ProxyRotateResult, ProxyRotateResult>) -> Result<bool, ProxyRotateResult> {
+        self.request_count += 1;
+        if self.request_count >= self.rotation_count {
+            match rotation_callback() {
+                Ok(_) => {
+                    self.last_rotation = SystemTime::now();
+                    self.request_count = 0;
+                    Ok(true)
+                },
+                Err(e) => Err(e)
+            }
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+
+#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize)]
+pub enum ProxyRotationMode {
+    Timed(TimedProxyRotation),
+    RequestCount(RequestCountProxyRotation),
+    Manual
+}
+
+impl ProxyRotation for ProxyRotationMode {
+    fn call(&mut self, rotation_callback: impl FnOnce() -> Result<ProxyRotateResult, ProxyRotateResult>) -> Result<bool, ProxyRotateResult> {
+        match self {
+            ProxyRotationMode::Timed(ref mut rotation) => rotation.call(rotation_callback),
+            ProxyRotationMode::RequestCount(ref mut rotation) => rotation.call(rotation_callback),
+            ProxyRotationMode::Manual => Ok(false)  
+        }
+    }
+}
+
 
 #[derive(Serialize, Deserialize)]
 #[derive(utoipa::ToSchema)]
@@ -84,26 +193,24 @@ pub struct ProxySettingsRotationIntervalUpdate {
 #[derive(Debug, Clone)]
 #[derive(Serialize, Deserialize)]
 pub struct ProxySetting {
-    pub rotation_interval: u16,
+    pub rotation: ProxyRotationMode,
     pub monitored_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProxyState {
     pub nordvpn: NordVPN,
-    drained: bool,
+    pub drained: bool,
     inbound_connections: HashMap<String, SystemTime>,
     inflight_connections: u16,
     inflight_connect_requests: u16,
     monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>,
-    //rotation_interval: u16,
-    last_rotation: SystemTime,
-    //sanitizer: Option<JoinHandle<ProxyStatusSanitizerResult>>,
+    last_rotation: SchemaCompatibleSystemTime,
     pub settings: ProxySetting,
 }
 
 impl ProxyState {
-    pub fn new(nordvpn: NordVPN, monitored_hosts: Vec<String>, rotation_interval: u16) -> Self {
+    pub fn new(nordvpn: NordVPN, monitored_hosts: Vec<String>, rotation: ProxyRotationMode) -> Self {
         ProxyState {
             nordvpn,
             drained: false,
@@ -111,10 +218,9 @@ impl ProxyState {
             inflight_connections: 0,
             inflight_connect_requests: 0,
             monitored_hosts: monitored_hosts.iter().map(|host| (host.clone(), (None, vec![]))).collect(),
-            //rotation_interval: rotation_interval,
-            last_rotation: SystemTime::now(),
+            last_rotation: SchemaCompatibleSystemTime::now(),
             settings: ProxySetting {
-                rotation_interval: rotation_interval,
+                rotation: rotation,
                 monitored_hosts: monitored_hosts,
             }
         }
@@ -136,10 +242,6 @@ impl ProxyState {
         });
     }
 
-    //pub async fn run(self, bind_addr: SocketAddr) -> RunReturnType {
-    //    // Do not use this to run multiple listeners for the same instance, because these instance will not be synchronized
-    //    proxy_functions::run(Arc::new(RwLock::new(self)), bind_addr).await
-    //} 
 
     pub fn sanitize(&mut self, retention: Option<u64>) {
         self.purge(retention);
@@ -163,7 +265,9 @@ impl ProxyState {
     pub fn remove_connection(&mut self, peer_addr: String) {
         self.inbound_connections.remove(&peer_addr);
         self.inflight_connections -= 1;
-        self.rotate_if_needed();
+        let mut rotation = self.settings.rotation.clone();
+        let _ = rotation.call(|| self.rotate());
+        self.settings.rotation = rotation;
     }
 
     pub fn add_connect_request(&mut self, host: &str) {
@@ -187,28 +291,44 @@ impl ProxyState {
     }
 
     pub fn set_rotation_interval(&mut self, interval: u16) -> ProxySettingsRotationIntervalUpdate {
-        let before = self.settings.rotation_interval;
-        self.settings.rotation_interval = interval;
-        ProxySettingsRotationIntervalUpdate {
-            before: before,
-            after: interval
+
+        match self.settings.rotation {
+            ProxyRotationMode::Timed(ref mut value) => {
+                let before = value.interval.as_secs() as u16;
+                value.interval = std::time::Duration::from_secs(interval as u64);
+                ProxySettingsRotationIntervalUpdate {
+                    before,
+                    after: interval
+                }
+            },
+            _ => {
+                self.settings.rotation = ProxyRotationMode::Timed(TimedProxyRotation::new(interval as u64));
+                ProxySettingsRotationIntervalUpdate {
+                    before: 0,
+                    after: interval
+                }
+            }
         }
     }
 
-    fn rotate_if_needed(&mut self) -> bool {
-        if self.settings.rotation_interval > 0 && self.last_rotation.elapsed().unwrap().as_secs() > self.settings.rotation_interval as u64 {
-            self.rotate();
-            return true;
-        }
-        false
-    }
 
-    pub fn rotate(&mut self) -> ProxyRotateResult {
+    pub fn rotate(&mut self) -> Result<ProxyRotateResult, ProxyRotateResult> {
         let _result = self.nordvpn.rotate();
-        self.last_rotation = SystemTime::now();
-        log::info!("Rotated proxy");
-        ProxyRotateResult {
-            last_rotation: self.last_rotation
+        match _result {
+            Ok(_) => {
+                self.last_rotation = SchemaCompatibleSystemTime::now();
+                log::info!("Rotated proxy");
+                return Ok(ProxyRotateResult {
+                    success: true,
+                    last_rotation: self.last_rotation.clone()
+                })
+            },
+            Err(_) => {
+                return Err(ProxyRotateResult {
+                    success: false,
+                    last_rotation: self.last_rotation.clone()
+                });
+            }
         }
     }
 
