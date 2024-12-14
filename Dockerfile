@@ -8,7 +8,9 @@ FROM $BUILD_SOURCE_IMAGE AS build-image
 COPY src src
 COPY Cargo.toml Cargo.toml
 
-RUN cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/home/root/app/target \
+    cargo build --release
 
 
 ## Layer 2
