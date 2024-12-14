@@ -3,7 +3,7 @@
 use std::{collections::HashSet, sync::{Arc, RwLock}};
 use gethostname::gethostname;
 use uuid::Uuid;
-use local_ip_address::local_ip;
+use local_ip_address::list_afinet_netifas;
 
 
 
@@ -26,15 +26,15 @@ pub type ClusterTouchpoint = String;
 pub struct ClusterNode {
     id: ClusterNodeId,
     host: String,
-    ip: String,
+    ip_addresses: Vec<String>,
     port: u16,
 }
 impl ClusterNode {
-    pub fn new(id: ClusterNodeId, host: String, ip: String, port: u16) -> Self {
+    pub fn new(id: ClusterNodeId, host: String, ip_addresses: Vec<String>, port: u16) -> Self {
         Self {
             id,
             host: host,
-            ip,
+            ip_addresses,
             port,
         }
     }
@@ -46,7 +46,60 @@ impl ClusterNode {
 pub struct Cluster {
     master: Option<ClusterNodeId>,
     touchpoints: HashSet<ClusterTouchpoint>,
-    nodes: HashSet<ClusterNode>,
+    other_nodes: HashSet<ClusterNode>,
+    local_node: ClusterNode,
+}
+impl Cluster {
+    pub fn new(cluster_touchpoints: HashSet<ClusterTouchpoint>, port: u16) -> Self {
+
+        let network_interfaces = list_afinet_netifas().unwrap();
+        let ip_addesess = network_interfaces.iter().map(|(_, ip)| ip.to_string()).collect();
+
+        Self {
+            master: None,
+            touchpoints: cluster_touchpoints,
+            other_nodes: HashSet::new(),
+            local_node: ClusterNode::new(
+                Uuid::new_v4().to_string(),
+                gethostname().to_str().unwrap().to_string(),
+                ip_addesess,
+                port,
+            ),
+        }
+    }
+
+    /*
+    pub fn add_node(&mut self, node: ClusterNode) {
+        self.other_nodes.insert(node);
+    }
+
+    pub fn advertise(&self, touchpoint: ClusterTouchpoint) {
+
+        let client = hyper::Client::new();
+        let res = client.post(&touchpoint)
+            .json(&self.local_node)
+            .send();
+
+        match res {
+            Ok(response) => {
+            if response.status().is_success() {
+                log::info!("Successfully advertised to {}", touchpoint);
+            } else {
+                log::error!("Failed to advertise to {}: {:?}", touchpoint, response.status());
+            }
+            }
+            Err(err) => {
+            log::error!("Error advertising to {}: {:?}", touchpoint, err);
+            }
+        }
+    }
+
+    pub fn discovery(&self) -> Vec<ClusterNode> {
+        for touchpoint in self.touchpoints.iter() {
+            self.advertise(touchpoint.clone());
+        }
+    }
+    */
 }
 
 #[derive(Debug, Clone)]
@@ -57,27 +110,15 @@ pub struct Admin {
 }
 
 
-impl Admin {
+impl Admin {        
     pub fn new(curl_client: CurlClient, proxy: Arc<RwLock<proxy::ProxyState>>, cluster_touchpoints: HashSet<ClusterTouchpoint>, port: u16) -> Result<Self, &'static str> {
 
         log::info!("Creating new Admin instance");
 
+
         return Ok(Self {
             curl_client,
-            cluster: Cluster {
-                master: None,
-                touchpoints: cluster_touchpoints,
-                nodes: {
-                    let mut nodes = HashSet::new();
-                    nodes.insert(ClusterNode::new(
-                        Uuid::new_v4().to_string(),
-                        gethostname().to_str().unwrap().to_string(),
-                        local_ip().unwrap().to_string(),
-                        port,
-                    ));
-                    nodes
-                },
-            },
+            cluster: Cluster::new(cluster_touchpoints, port),
             proxy,
         });
     }
