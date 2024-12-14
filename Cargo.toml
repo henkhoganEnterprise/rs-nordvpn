@@ -16,6 +16,7 @@ hyper-util = { version = "0.1", features = ["full"] }
 local-ip-address = "0.6"
 log = "0.4.22"
 pin-project-lite = "*"
+reqwest = { version = "0.12", features = ["json"] }
 route-recognizer = "0.3.1"
 serde = { version = "1.0.120", features = ["default"] }
 serde_derive = "1.0"

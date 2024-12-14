@@ -5,8 +5,6 @@ use gethostname::gethostname;
 use uuid::Uuid;
 use local_ip_address::list_afinet_netifas;
 
-
-
 use helper::CurlClient;
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +47,22 @@ pub struct Cluster {
     other_nodes: HashSet<ClusterNode>,
     local_node: ClusterNode,
 }
+impl Default for Cluster {
+    fn default() -> Self {
+        Self {
+            master: None,
+            touchpoints: HashSet::new(),
+            other_nodes: HashSet::new(),
+            local_node: ClusterNode::new(
+                "error".to_string(),
+                "error".to_string(),
+                vec![],
+                0,
+            ),
+        }
+    }
+}
+
 impl Cluster {
     pub fn new(cluster_touchpoints: HashSet<ClusterTouchpoint>, port: u16) -> Self {
 
@@ -68,31 +82,44 @@ impl Cluster {
         }
     }
 
-    /*
-    pub fn add_node(&mut self, node: ClusterNode) {
+    pub fn add_node(&mut self, node: ClusterNode) -> bool {
         self.other_nodes.insert(node);
-    }
-
-    pub fn advertise(&self, touchpoint: ClusterTouchpoint) {
-
-        let client = hyper::Client::new();
-        let res = client.post(&touchpoint)
-            .json(&self.local_node)
-            .send();
-
-        match res {
-            Ok(response) => {
-            if response.status().is_success() {
-                log::info!("Successfully advertised to {}", touchpoint);
-            } else {
-                log::error!("Failed to advertise to {}: {:?}", touchpoint, response.status());
-            }
-            }
-            Err(err) => {
-            log::error!("Error advertising to {}: {:?}", touchpoint, err);
-            }
+        return true;
         }
+
+    pub fn remove_node(&mut self, node_id: String) -> bool {
+        self.other_nodes.retain(|node| node.id != node_id);
+        return true;
     }
+
+    pub fn add_touchpoint(&mut self, touchpoint: ClusterTouchpoint) -> bool {
+        self.touchpoints.insert(touchpoint);
+        return true;
+    }
+
+    pub fn remove_touchpoint(&mut self, touchpoint: ClusterTouchpoint) -> bool {
+        self.touchpoints.remove(&touchpoint);
+        return true;
+    }
+    
+    /*
+    pub async fn advertise(&self, touchpoint: ClusterTouchpoint) -> Result<Cluster, Box<dyn std::error::Error>> {
+
+        let client = reqwest::Client::new();
+        let resp = client.post(&touchpoint)
+            .json(&self.local_node)
+            .send()
+            .await?
+            .json::<Cluster>()
+            .await?;
+    
+        //println!("{resp:#?}");
+
+
+        return Ok(resp);
+    }
+    */
+    /*
 
     pub fn discovery(&self) -> Vec<ClusterNode> {
         for touchpoint in self.touchpoints.iter() {
@@ -153,8 +180,8 @@ impl Admin {
 
 
 pub mod restapi {
-    use std::sync::Arc;
-    use axum::{extract::Path, Router};
+    use std::sync::{Arc, RwLock};
+    use axum::{extract::{Path, State}, Router};
     use http::StatusCode;
     use utoipa_axum::router::OpenApiRouter;
     use utoipa_axum::routes;
@@ -164,16 +191,13 @@ pub mod restapi {
 
     use crate::{nordvpn::{NordVpnConnectOutput, NordVpnDisconnectOutput, NordVpnStatusOutput}, proxy::{ProxyRotateResult, ProxyRotationMode, ProxySettingsDrainUpdate, ProxyStatus, ProxyStatusCompact, RequestCountProxyRotation}};
 
-    use super::Cluster;
+    use super::{Cluster, ClusterNode};
     use super::super::Admin;
 
-    use axum::{
-        extract::State,
-        Json,
-    };
+    use axum::Json;
 
     const IP_URL: &str = "https://api.ipify.org";
-    type AdminState = Arc<Admin>;
+    type AdminState = Arc<RwLock<Admin>>;
 
     pub(super) fn admin_router(admin_state: AdminState) -> OpenApiRouter {
         return OpenApiRouter::new()
@@ -182,10 +206,15 @@ pub mod restapi {
             .routes(routes!(get_public_ip))
             .with_state(admin_state);
     }
-
+    
     pub(super) fn cluster_router(admin_state: AdminState) -> OpenApiRouter {
         return OpenApiRouter::new()
-            .routes(routes!(get_cluster))
+            //.routes(routes!(cluster_advertise))
+            .routes(routes!(cluster_node_add))
+            .routes(routes!(cluster_node_remove))
+            .routes(routes!(cluster_state))
+            .routes(routes!(cluster_touchpoint_add))
+            .routes(routes!(cluster_touchpoint_remove))
             .with_state(admin_state);
     }
 
@@ -256,7 +285,7 @@ pub mod restapi {
         )
     )]
     async fn get_rotation(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(admin_state.get_rotation())
+        Json(admin_state.read().unwrap().get_rotation())
     }
 
     #[utoipa::path(
@@ -273,7 +302,7 @@ pub mod restapi {
     )]
     async fn set_rotation(Path(mode): Path<String>, Path(value): Path<String>, State(admin_state): State<AdminState>) -> Json<String> {
         log::info!("mpde: {:?},  value: {:?}", mode, value);
-        return Json(admin_state.set_rotation_from_str(&mode, &value));
+        return Json(admin_state.write().unwrap().set_rotation_from_str(&mode, &value));
     }
 
     /*
@@ -299,8 +328,28 @@ pub mod restapi {
         )
     )]
     async fn get_public_ip(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(admin_state.curl_client.get(IP_URL).unwrap())
+        Json(admin_state.read().unwrap().curl_client.get(IP_URL).unwrap())
     }
+
+    /*
+    #[utoipa::path(
+        post,
+        path = "/advertise/{touchpoint}",
+        responses(
+            (status = 200, description = "Advertise this node towards the touchpoint", body = Cluster),
+            (status = 500, description = "Failed to advertise", body = Cluster)
+        ),
+        params(
+            ("touchpoint"  = String, Path, description = "Touchpoint")
+        )
+    )]
+    async fn cluster_advertise(State(admin_state): State<AdminState>, Path(touchpoint): Path<String>) -> (StatusCode, Json<Cluster>) {
+        match admin_state.read().unwrap().cluster.advertise(touchpoint.clone()).await {
+            Ok(cluster) => (StatusCode::OK, Json(cluster)),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Cluster::default())),
+        }
+    }
+    */
 
     #[utoipa::path(
         get,
@@ -310,20 +359,73 @@ pub mod restapi {
             (status = 200, description = "Show cluster state", body = Cluster)
         )
     )]
-    async fn get_cluster(State(admin_state): State<AdminState>) -> Json<Cluster> {
-        return Json(admin_state.cluster.clone());
+    async fn cluster_state(State(admin_state): State<AdminState>) -> Json<Cluster> {
+        return Json(admin_state.read().unwrap().cluster.clone());
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/node/add",
+        responses(
+            (status = 200, description = "Add Cluster Node", body = bool)
+        ),
+        request_body = ClusterNode
+    )]
+    async fn cluster_node_add(State(admin_state): State<AdminState>, Json(node): Json<ClusterNode>) -> Json<bool> {
+        return Json(admin_state.write().unwrap().cluster.add_node(node));
+    }
+
+    #[utoipa::path(
+        delete,
+        path = "/node/remove/{node_id}",
+        responses(
+            (status = 200, description = "Remove Cluster Node", body = bool)
+        ),
+        params(
+            ("node_id"  = String, Path, description = "Node ID")
+        )
+    )]
+    async fn cluster_node_remove(Path(node_id): Path<String>, State(admin_state): State<AdminState>) -> Json<bool> {
+        return Json(admin_state.write().unwrap().cluster.remove_node(node_id));
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/touchpoint/add",
+        responses(
+            (status = 200, description = "Add Cluster Touchpoint", body = bool)
+        ),
+        params(
+            ("touchpoint"  = String, Path, description = "Touchpoint")
+        )
+    )]
+    async fn cluster_touchpoint_add(Path(touchpoint): Path<String>, State(admin_state): State<AdminState>) -> Json<bool> {
+        return Json(admin_state.write().unwrap().cluster.add_touchpoint(touchpoint));
+    }
+
+    #[utoipa::path(
+        delete,
+        path = "/touchpoint/remove/{touchpoint}",
+        responses(
+            (status = 200, description = "Remove Cluster Touchpoint", body = bool)
+        ),
+        params(
+            ("touchpoint"  = String, Path, description = "Touchpoint")
+        )
+    )]
+    async fn cluster_touchpoint_remove(Path(touchpoint): Path<String>, State(admin_state): State<AdminState>) -> Json<bool> {
+        return Json(admin_state.write().unwrap().cluster.remove_touchpoint(touchpoint));
     }
 
     #[utoipa::path(
         get,
         path = "/account",
-        //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])
         )
     )]
     async fn nordvpn_account(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(admin_state.proxy.read().unwrap().nordvpn.account().unwrap())
+        Json(admin_state.read().unwrap().proxy.read().unwrap().nordvpn.account().unwrap())
     }
 
     #[utoipa::path(
@@ -335,9 +437,9 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_connect(State(admin_state): State<AdminState>) -> Json<NordVpnConnectOutput> {
-        admin_state.proxy.write().unwrap().drain();
-        let resp = admin_state.proxy.read().unwrap().nordvpn.connect(None);
-        admin_state.proxy.write().unwrap().activate();
+        admin_state.read().unwrap().proxy.write().unwrap().drain();
+        let resp = admin_state.read().unwrap().proxy.read().unwrap().nordvpn.connect(None);
+        admin_state.read().unwrap().proxy.write().unwrap().activate();
         match resp {
             Ok(output) => {
                 return Json(output)
@@ -360,7 +462,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_connect_with_argument(Path(argument): Path<String>, State(admin_state): State<AdminState>) -> Json<NordVpnConnectOutput> {
-        match admin_state.proxy.read().unwrap().nordvpn.connect(Some(argument.clone())) {
+        match admin_state.read().unwrap().proxy.read().unwrap().nordvpn.connect(Some(argument.clone())) {
             Ok(output) => {
                 return Json(output)
             },
@@ -379,7 +481,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_disconnect(State(admin_state): State<AdminState>) -> Json<NordVpnDisconnectOutput> {
-        match admin_state.proxy.read().unwrap().nordvpn.disconnect() {
+        match admin_state.read().unwrap().proxy.read().unwrap().nordvpn.disconnect() {
             Ok(output) => Json(output),
             Err(err) => {
                 Json(err)
@@ -396,7 +498,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_logs(State(admin_state): State<AdminState>) -> Json<Vec<u8>> {
-        Json(admin_state.proxy.read().unwrap().nordvpn.logs(10))
+        Json(admin_state.read().unwrap().proxy.read().unwrap().nordvpn.logs(10))
     }
 
     #[utoipa::path(
@@ -411,7 +513,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_logs_with_argument(Path(lines): Path<u16>, State(admin_state): State<AdminState>) -> Json<String> {
-            Json(serde_json::to_string(&admin_state.proxy.read().unwrap().nordvpn.logs(lines)).unwrap())
+            Json(serde_json::to_string(&admin_state.read().unwrap().proxy.read().unwrap().nordvpn.logs(lines)).unwrap())
         }
 
     #[utoipa::path(
@@ -423,7 +525,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_rotate(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.proxy.write().unwrap().nordvpn.rotate()).unwrap())
+        Json(serde_json::to_string(&admin_state.read().unwrap().proxy.write().unwrap().nordvpn.rotate()).unwrap())
     }
 
     #[utoipa::path(
@@ -436,8 +538,8 @@ pub mod restapi {
     )]
     async fn nordvpn_sanitize(State(admin_state): State<AdminState>) -> Json<ProxyStatus> {
         let retention = Some(60);
-        admin_state.proxy.write().unwrap().sanitize(retention);
-        return Json(admin_state.proxy.read().unwrap().status());
+        admin_state.read().unwrap().proxy.write().unwrap().sanitize(retention);
+        return Json(admin_state.read().unwrap().proxy.read().unwrap().status());
     }
 
     #[utoipa::path(
@@ -449,7 +551,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_status(State(admin_state): State<AdminState>) -> Json<NordVpnStatusOutput> {
-        Json(admin_state.proxy.read().unwrap().nordvpn.status())
+        Json(admin_state.read().unwrap().proxy.read().unwrap().nordvpn.status())
     }
 
     #[utoipa::path(
@@ -461,7 +563,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_daemon_restart(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", admin_state.proxy.read().unwrap().nordvpn.daemon_restart(Some(30))))
+        Json(format!("{:?}", admin_state.read().unwrap().proxy.read().unwrap().nordvpn.daemon_restart(Some(30))))
     }
 
     #[utoipa::path(
@@ -473,7 +575,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_daemon_status(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", admin_state.proxy.read().unwrap().nordvpn.daemon_status().output))
+        Json(format!("{:?}", admin_state.read().unwrap().proxy.read().unwrap().nordvpn.daemon_status().output))
     }
 
     #[utoipa::path(
@@ -485,7 +587,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_daemon_start(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", admin_state.proxy.read().unwrap().nordvpn.daemon_start(Some(30))))
+        Json(format!("{:?}", admin_state.read().unwrap().proxy.read().unwrap().nordvpn.daemon_start(Some(30))))
     }
 
     #[utoipa::path(
@@ -497,7 +599,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_daemon_stop(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", admin_state.proxy.read().unwrap().nordvpn.daemon_stop()))
+        Json(format!("{:?}", admin_state.read().unwrap().proxy.read().unwrap().nordvpn.daemon_stop()))
     }
 
     #[utoipa::path(
@@ -510,7 +612,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_health(State(admin_state): State<AdminState>) -> (StatusCode, Json<String>) {
-        match admin_state.proxy.read().unwrap().drained {
+        match admin_state.read().unwrap().proxy.read().unwrap().drained {
             false => (StatusCode::OK, Json("Proxy is up".to_string())),
             true => (StatusCode::SERVICE_UNAVAILABLE, Json("Proxy is out of service".to_string())),
         }
@@ -525,10 +627,11 @@ pub mod restapi {
             (status = 500, description = "List all todos successfully", body = ProxyRotateResult)
         )
     )]
-    async fn proxy_rotate(State(admin_state): State<AdminState>) -> Json<ProxyRotateResult> {
-        match admin_state.proxy.write().unwrap().rotate() {
-            Ok(result) => Json(result),
-            Err(err) => Json(err),}
+    async fn proxy_rotate(State(admin_state): State<AdminState>) -> (StatusCode, Json<ProxyRotateResult>) {
+        match admin_state.read().unwrap().proxy.write().unwrap().rotate() {
+            Ok(result) => (StatusCode::OK ,Json(result)),
+            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR ,Json(err))
+        }
     }
 
     #[utoipa::path(
@@ -540,7 +643,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_settings(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.proxy.read().unwrap().settings).unwrap())
+        Json(serde_json::to_string(&admin_state.read().unwrap().proxy.read().unwrap().settings).unwrap())
     }
 
     #[utoipa::path(
@@ -555,7 +658,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_settings_rotation_interval(Path(interval): Path<u16>, State(admin_state): State<AdminState>) -> Json<String> {
-        let output = admin_state.proxy.write().unwrap().set_rotation_interval(interval);
+        let output = admin_state.read().unwrap().proxy.write().unwrap().set_rotation_interval(interval);
         Json(serde_json::to_string(&output).unwrap())
     }
 
@@ -571,16 +674,16 @@ pub mod restapi {
         )
     )]
     async fn proxy_settings_drain(Path(drain): Path<bool>, State(admin_state): State<AdminState>) -> Json<ProxySettingsDrainUpdate> {
-        let before = admin_state.proxy.read().unwrap().status().drained;
+        let before = admin_state.read().unwrap().proxy.read().unwrap().status().drained;
         if drain {
-            admin_state.proxy.write().unwrap().drain();
+            admin_state.read().unwrap().proxy.write().unwrap().drain();
         } else {
-            admin_state.proxy.write().unwrap().activate();
+            admin_state.read().unwrap().proxy.write().unwrap().activate();
         }
         Json(
             ProxySettingsDrainUpdate::new(  
                 before,
-                admin_state.proxy.read().unwrap().status().drained
+                admin_state.read().unwrap().proxy.read().unwrap().status().drained
             )
         )
     }
@@ -596,7 +699,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_status(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", serde_json::to_string(&admin_state.proxy.read().unwrap().status()).unwrap()))
+        Json(format!("{:?}", serde_json::to_string(&admin_state.read().unwrap().proxy.read().unwrap().status()).unwrap()))
     }
 
     #[utoipa::path(
@@ -608,7 +711,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_status_purge(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.proxy.write().unwrap().purge(None)).unwrap())
+        Json(serde_json::to_string(&admin_state.read().unwrap().proxy.write().unwrap().purge(None)).unwrap())
     }
 
     #[utoipa::path(
@@ -620,7 +723,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_status_compact(State(admin_state): State<AdminState>) -> Json<ProxyStatusCompact> {
-        return Json(admin_state.proxy.read().unwrap().compact_status());
+        return Json(admin_state.read().unwrap().proxy.read().unwrap().compact_status());
     }
 
     #[utoipa::path(
@@ -632,7 +735,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_settings_rotation(State(admin_state): State<AdminState>) -> Json<ProxyRotationMode> {
-        Json(admin_state.proxy.read().unwrap().settings.rotation.clone())
+        Json(admin_state.read().unwrap().proxy.read().unwrap().settings.rotation.clone())
     }
 
     #[utoipa::path(
@@ -647,7 +750,7 @@ pub mod restapi {
     )]
     async fn proxy_settings_rotation_set_requestcount(Path(count): Path<u16>, State(admin_state): State<AdminState>) -> Json<ProxyRotationMode> {
         let rotation = ProxyRotationMode::RequestCount(RequestCountProxyRotation::new(count));
-        admin_state.proxy.write().unwrap().settings.rotation = rotation.clone();
+        admin_state.read().unwrap().proxy.write().unwrap().settings.rotation = rotation.clone();
         Json(rotation)
     }
 

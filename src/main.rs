@@ -189,7 +189,7 @@ async fn main() {
     let admin_addr = SocketAddr::from_str(&format!("{}:{}", args.bind_ip.clone(), args.admin_port)).unwrap();
     
     let admin_listener = tokio::net::TcpListener::bind(admin_addr).await.unwrap();
-    let admin_router = router(Arc::new(admin));
+    let admin_router = router(Arc::new(admin.into()));
 
     
     let admin_task = tokio::spawn(async move {
