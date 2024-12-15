@@ -2,7 +2,6 @@ use std::{collections::{HashSet, VecDeque}, process::Command};
 use dns_lookup;
 
 use daemon::StatusOutput;
-use hyper_util::client::legacy::connect::dns;
 use serde_derive::{Deserialize, Serialize};
 
 
@@ -40,6 +39,7 @@ pub struct NordVpnStatusOutput {
     pub city: String,
     pub technology: String,
     pub protocol: String,
+    pub post_quantum: bool,
     pub transfer: String,
     pub uptime: String
 }
@@ -368,6 +368,7 @@ impl NordVPN {
         let mut city = String::new();
         let mut technology = String::new();
         let mut protocol = String::new();
+        let mut post_quantum = false;
         let mut transfer = String::new();
         let mut uptime = String::new();
 
@@ -392,6 +393,12 @@ impl NordVPN {
                 technology = line.replace("Current technology: ", "").to_string();
             } else if line.starts_with("Current protocol: ") {
                 protocol = line.replace("Current protocol: ", "").to_string();
+            } else if line.starts_with("Post-quantum VPN: ") {
+                if line.contains("Disabled") {
+                    post_quantum = false;
+                } else {
+                    post_quantum = true;
+                }
             } else if line.starts_with("Transfer: ") {
                 transfer = line.replace("Transfer: ", "").to_string();
             } else if line.starts_with("Uptime: ") {
@@ -408,6 +415,7 @@ impl NordVPN {
             city,
             technology,
             protocol,
+            post_quantum,
             transfer,
             uptime,
         };
@@ -432,6 +440,7 @@ impl NordVPN {
             city: "".to_string(),
             technology: "".to_string(),
             protocol: "".to_string(),
+            post_quantum: false,
             transfer: "".to_string(),
             uptime: "".to_string(),
         };
