@@ -149,18 +149,13 @@ async fn connect_handler(req: Request<hyper::body::Incoming>, peer_addr: String,
         tokio::task::spawn(async move {
             match hyper::upgrade::on(req).await {
                 Ok(upgraded) => {
-                    /* 
-                    if let Err(e) = tunnel(upgraded, addr).await {
-                        log::error!("server io error: {}", e);
-                    };
-                    */
                     match tunnel(upgraded, addr).await {
                         Ok((from_client, from_server)) => {
                             log::info!("tunnel closed: {} bytes from client, {} bytes from server", from_client, from_server);
                         }
                         Err(e) => {
-                            log::error!("server io error: {}", e);
-                        },
+                            log::error!("tunnel creation error: {},{}", e.kind(), e);
+                        }
                     }
 
                 }
