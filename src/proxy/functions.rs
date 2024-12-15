@@ -31,17 +31,15 @@ pub async fn run(proxy_state: Arc<RwLock<ProxyState>>, bind_addr: SocketAddr) ->
 
     let listener = TcpListener::bind(bind_addr).await?;
     log::info!("Proxy Listening on http://{}", bind_addr);
-
     
     loop {
-        
         let (stream, _) = listener.accept().await?;
-    
         let peer_addr = stream.peer_addr()?;
         log::info!("Proxy accepted a new TCP connection from: {}", peer_addr);
         let io = TokioIo::new(stream);
     
         let proxy_state = proxy_state.clone();
+
         tokio::task::spawn(async move {
             if let Err(err) = http1::Builder::new()
                 .preserve_header_case(true)
@@ -51,13 +49,11 @@ pub async fn run(proxy_state: Arc<RwLock<ProxyState>>, bind_addr: SocketAddr) ->
                     service_fn(move |req| proxy(proxy_state.clone(), peer_addr, req))
                 )
                 .with_upgrades()
-
                 .await
             {
                 log::error!("Failed to serve connection: {:?}", err);
             }
         });
-        //log::info!("Proxy connection closed from {}", peer_addr);
     }
 }
 

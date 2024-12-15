@@ -1,6 +1,8 @@
 use std::{collections::{HashSet, VecDeque}, process::Command};
+use dns_lookup;
 
 use daemon::StatusOutput;
+use hyper_util::client::legacy::connect::dns;
 use serde_derive::{Deserialize, Serialize};
 
 
@@ -11,6 +13,7 @@ mod daemon;
 pub enum Error {
     AccountCommandFailed,
     ConnectFailed,
+    DnsLookupFailed,
     FilterDisabled,
     ParseFailed
 }
@@ -52,17 +55,19 @@ pub struct NordVPN {
     path: String,
     token: String,
     daemon: daemon::Daemon,
+    dns_lookup: Option<String>,
     filter_enabled: bool,
     filter: VecDeque<String>,
 }
 
 impl NordVPN {
-    pub fn new(path: String, token: String, filter: Option<HashSet<String>>) -> Result<Self, &'static str> {
+    pub fn new(path: String, token: String, filter: Option<HashSet<String>>, dns_lookup: Option<String>) -> Result<Self, &'static str> {
         log::info!("Creating new NordVPN instance");
         return Ok(Self {
             path,
             token,
             daemon: daemon::Daemon::new()?,
+            dns_lookup,
             filter_enabled: filter == None,
             filter: match filter {
                 None => VecDeque::<String>::new(),
@@ -172,7 +177,33 @@ impl NordVPN {
         };
         if output.0 {
             log::info!("Connected: {}", output.1);
-            return Ok(self.parse_connect_output(output.1));
+            let parsed_output = self.parse_connect_output(output.1);
+            let dns_error ;
+            match dns_lookup::lookup_host("google.com") {
+                Ok(lookup) => {
+                    log::info!("DNS Lookup for google.com: {:?}", lookup);
+                    dns_error = false;
+                },
+                Err(e) => {
+                    log::error!("Failed to perform DNS lookup for google.com");
+                    dns_error = true;
+                }
+            }
+
+            match dns_error {
+                false => {
+                    return Ok(parsed_output);
+                },
+                true => {
+                    return Err(NordVpnConnectOutput {
+                        connected: parsed_output.connected,
+                        group: parsed_output.group,
+                        server_id: parsed_output.server_id,
+                        server_fqdn: parsed_output.server_fqdn,
+                        error: Some(Error::DnsLookupFailed)
+                    });
+                }
+            }
         } 
         log::error!("Failed to connect: {}", output.1.clone());
         return Err(NordVpnConnectOutput {
@@ -246,7 +277,7 @@ impl NordVPN {
             .stdout
     }
 
-    pub fn rotate(&mut self) -> Result<NordVpnConnectOutput, NordVpnConnectOutput> {
+    pub fn rotate(&mut self, retries: u8) -> Result<NordVpnConnectOutput, NordVpnConnectOutput> {
         if !self.filter_enabled || self.filter.len() == 0 {
             return self.connect(None);
         }

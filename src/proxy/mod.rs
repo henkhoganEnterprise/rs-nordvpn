@@ -195,6 +195,7 @@ pub struct ProxySettingsRotationIntervalUpdate {
 pub struct ProxySetting {
     pub rotation: ProxyRotationMode,
     pub monitored_hosts: Vec<String>,
+    pub rotation_retries: u8
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +223,7 @@ impl ProxyState {
             settings: ProxySetting {
                 rotation: rotation,
                 monitored_hosts: monitored_hosts,
+                rotation_retries: 3
             }
         }
     }
@@ -266,7 +268,7 @@ impl ProxyState {
         self.inbound_connections.remove(&peer_addr);
         self.inflight_connections -= 1;
         let mut rotation = self.settings.rotation.clone();
-        let _ = rotation.call(|| self.rotate());
+        let _ = rotation.call(|| self.rotate_default());
         self.settings.rotation = rotation;
     }
 
@@ -312,18 +314,21 @@ impl ProxyState {
     }
 
 
-    pub fn rotate(&mut self) -> Result<ProxyRotateResult, ProxyRotateResult> {
-        let _result = self.nordvpn.rotate();
+    pub fn rotate(&mut self, retries: u8) -> Result<ProxyRotateResult, ProxyRotateResult> {
+        self.drain();
+        let _result = self.nordvpn.rotate(retries);
         match _result {
             Ok(_) => {
                 self.last_rotation = SchemaCompatibleSystemTime::now();
                 log::info!("Rotated proxy");
+                self.activate();
                 return Ok(ProxyRotateResult {
                     success: true,
                     last_rotation: self.last_rotation.clone()
                 })
             },
             Err(_) => {
+                log::error!("Failed to rotate proxy");
                 return Err(ProxyRotateResult {
                     success: false,
                     last_rotation: self.last_rotation.clone()
@@ -331,5 +336,10 @@ impl ProxyState {
             }
         }
     }
+
+    pub fn rotate_default(&mut self) -> Result<ProxyRotateResult, ProxyRotateResult> {
+        self.rotate(self.settings.rotation_retries)
+    }
+
 
 }

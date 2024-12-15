@@ -17,8 +17,8 @@ mod support;
 
 use crate::{helper, proxy};
 
+
 type ClusterNodeId = String;
-pub type ClusterTouchpoint = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, Eq, PartialEq, Hash)]
 pub struct ClusterNode {
@@ -43,7 +43,7 @@ impl ClusterNode {
 #[derive(utoipa::ToSchema)]
 pub struct Cluster {
     master: Option<ClusterNodeId>,
-    touchpoints: HashSet<ClusterTouchpoint>,
+    touchpoints: HashSet<String>,
     other_nodes: HashSet<ClusterNode>,
     local_node: ClusterNode,
 }
@@ -64,7 +64,7 @@ impl Default for Cluster {
 }
 
 impl Cluster {
-    pub fn new(cluster_touchpoints: HashSet<ClusterTouchpoint>, port: u16) -> Self {
+    pub fn new(cluster_touchpoints: HashSet<String>, port: u16) -> Self {
 
         let network_interfaces = list_afinet_netifas().unwrap();
         let ip_addesess = network_interfaces.iter().map(|(_, ip)| ip.to_string()).collect();
@@ -92,18 +92,17 @@ impl Cluster {
         return true;
     }
 
-    pub fn add_touchpoint(&mut self, touchpoint: ClusterTouchpoint) -> bool {
+    pub fn add_touchpoint(&mut self, touchpoint: String) -> bool {
         self.touchpoints.insert(touchpoint);
         return true;
     }
 
-    pub fn remove_touchpoint(&mut self, touchpoint: ClusterTouchpoint) -> bool {
+    pub fn remove_touchpoint(&mut self, touchpoint: String) -> bool {
         self.touchpoints.remove(&touchpoint);
         return true;
     }
     
-    /*
-    pub async fn advertise(&self, touchpoint: ClusterTouchpoint) -> Result<Cluster, Box<dyn std::error::Error>> {
+    pub async fn advertise(&self, touchpoint: String) -> Result<Cluster, Box<dyn std::error::Error>> {
 
         let client = reqwest::Client::new();
         let resp = client.post(&touchpoint)
@@ -113,12 +112,8 @@ impl Cluster {
             .json::<Cluster>()
             .await?;
     
-        //println!("{resp:#?}");
-
-
         return Ok(resp);
     }
-    */
     /*
 
     pub fn discovery(&self) -> Vec<ClusterNode> {
@@ -138,7 +133,7 @@ pub struct Admin {
 
 
 impl Admin {        
-    pub fn new(curl_client: CurlClient, proxy: Arc<RwLock<proxy::ProxyState>>, cluster_touchpoints: HashSet<ClusterTouchpoint>, port: u16) -> Result<Self, &'static str> {
+    pub fn new(curl_client: CurlClient, proxy: Arc<RwLock<proxy::ProxyState>>, cluster_touchpoints: HashSet<String>, port: u16) -> Result<Self, &'static str> {
 
         log::info!("Creating new Admin instance");
 
@@ -155,27 +150,6 @@ impl Admin {
         return "rotation".to_string();
     }
 
-    pub fn set_rotation_from_str(&self, rotation_type: &str, rotation_value: &str) -> String {
-        log::debug!("Setting rotation to type: {:?}, value: {:?}", rotation_type, rotation_value);
-        return "rotation".to_string();
-    }
-
-    //pub fn get_status(&self) -> bool {
-    //    log::debug!("Getting status...");
-    //    let output = self.nordvpn.account();
-    //    return output;
-    //}
-
-    /* pub fn nord_account(&self) -> () {
-        log::debug!("Checking NordVPN account...");
-        let output = self.nordvpn.account();
-        if output {
-            log::info!("Account: {}", output);
-        } else {
-            log::error!("Failed to fetch account: {}", output);
-        }
-        return ();
-    } */
 }
 
 
@@ -202,14 +176,13 @@ pub mod restapi {
     pub(super) fn admin_router(admin_state: AdminState) -> OpenApiRouter {
         return OpenApiRouter::new()
             .routes(routes!(get_rotation))
-            .routes(routes!(set_rotation))
             .routes(routes!(get_public_ip))
             .with_state(admin_state);
     }
     
     pub(super) fn cluster_router(admin_state: AdminState) -> OpenApiRouter {
         return OpenApiRouter::new()
-            //.routes(routes!(cluster_advertise))
+            .routes(routes!(cluster_advertise))
             .routes(routes!(cluster_node_add))
             .routes(routes!(cluster_node_remove))
             .routes(routes!(cluster_state))
@@ -288,23 +261,6 @@ pub mod restapi {
         Json(admin_state.read().unwrap().get_rotation())
     }
 
-    #[utoipa::path(
-        post,
-        path = "/admin/rotation/{mode}/{value}",
-        //tag = TODO_TAG,
-        responses(
-            (status = 200, description = "List all todos successfully", body = [String])
-        ),
-        params(
-            ("mode"  = String, Path, description = "Mode of rotation"),
-            ("value" = String, Path, description = "Value of rotation")
-        )
-    )]
-    async fn set_rotation(Path(mode): Path<String>, Path(value): Path<String>, State(admin_state): State<AdminState>) -> Json<String> {
-        log::info!("mpde: {:?},  value: {:?}", mode, value);
-        return Json(admin_state.write().unwrap().set_rotation_from_str(&mode, &value));
-    }
-
     /*
     #[utoipa::path(
         get,
@@ -331,7 +287,6 @@ pub mod restapi {
         Json(admin_state.read().unwrap().curl_client.get(IP_URL).unwrap())
     }
 
-    /*
     #[utoipa::path(
         post,
         path = "/advertise/{touchpoint}",
@@ -343,18 +298,29 @@ pub mod restapi {
             ("touchpoint"  = String, Path, description = "Touchpoint")
         )
     )]
-    async fn cluster_advertise(State(admin_state): State<AdminState>, Path(touchpoint): Path<String>) -> (StatusCode, Json<Cluster>) {
-        match admin_state.read().unwrap().cluster.advertise(touchpoint.clone()).await {
+    #[axum::debug_handler]
+    async fn cluster_advertise(Path(touchpoint): Path<String>, State(admin_state): State<AdminState>) -> (StatusCode, Json<Cluster>) {
+        let cluster = {
+            let admin = admin_state.read().unwrap();
+            admin.cluster.clone()
+        };
+        match cluster.advertise(touchpoint.clone()).await {
             Ok(cluster) => (StatusCode::OK, Json(cluster)),
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Cluster::default())),
         }
     }
+    /* 
+    async fn cluster_advertise(Path(touchpoint): Path<String>, State(admin_state): State<AdminState>) -> Json<Cluster> {
+        match admin_state.read().unwrap().cluster.advertise(touchpoint.clone()).await {
+            Ok(cluster) => Json(cluster),
+            Err(_) => Json(Cluster::default()),
+        }
+    }
     */
-
+    
     #[utoipa::path(
         get,
         path = "/state",
-        //tag = TODO_TAG,
         responses(
             (status = 200, description = "Show cluster state", body = Cluster)
         )
@@ -525,7 +491,7 @@ pub mod restapi {
         )
     )]
     async fn nordvpn_rotate(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(serde_json::to_string(&admin_state.read().unwrap().proxy.write().unwrap().nordvpn.rotate()).unwrap())
+        Json(serde_json::to_string(&admin_state.read().unwrap().proxy.write().unwrap().nordvpn.rotate(0)).unwrap())
     }
 
     #[utoipa::path(
@@ -628,7 +594,7 @@ pub mod restapi {
         )
     )]
     async fn proxy_rotate(State(admin_state): State<AdminState>) -> (StatusCode, Json<ProxyRotateResult>) {
-        match admin_state.read().unwrap().proxy.write().unwrap().rotate() {
+        match admin_state.read().unwrap().proxy.write().unwrap().rotate_default() {
             Ok(result) => (StatusCode::OK ,Json(result)),
             Err(err) => (StatusCode::INTERNAL_SERVER_ERROR ,Json(err))
         }
@@ -649,9 +615,8 @@ pub mod restapi {
     #[utoipa::path(
         post,
         path = "/settings/rotation/interval/{interval}",
-        //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = String)
         ),
         params(
             ("interval"  = u16, Path, description = "Interval for rotation")

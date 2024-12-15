@@ -1,6 +1,6 @@
 use admin::Admin;
 use log;
-use clap::Parser;
+use clap::{builder::Str, Parser};
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
@@ -13,7 +13,6 @@ use std::net::SocketAddr;
 
 #[path = "./admin/mod.rs"]
 mod admin;
-use admin::ClusterTouchpoint;
 use admin::restapi::router;
 #[path = "./nordvpn/mod.rs"]
 mod nordvpn;
@@ -36,27 +35,37 @@ struct CliArgs {
     
     #[arg(short, long)]
     token: String,
+
+    #[arg(short, long)]
+    dns_lookup: Option<String>,
+
     #[arg(short, long)]
     #[clap(default_value_t = 80)]
     admin_port: u16,
+
     #[arg(short, long)]
     #[clap(default_value_t = 3128)]
     proxy_port: u16,
+
     #[arg(short, long)]
     #[clap(default_value_t = String::from("0.0.0.0"))]
     bind_ip: String,
+
     #[arg(short, long)]
     #[clap(default_values_t = Vec::<String>::new())]
     monitored_hosts: Vec<String>,
+
     #[arg(short, long)]
     #[clap(default_values_t = Vec::<String>::new())]
     filter: Vec<String>,
+
     #[arg(short, long)]
     #[clap(default_value_t = 0)]
     proxy_rotation_argument: u64,
+
     #[arg(short, long)]
-    #[clap(default_values_t = Vec::<ClusterTouchpoint>::new())]
-    cluster_touchpoints: Vec<ClusterTouchpoint>,
+    #[clap(default_values_t = Vec::<String>::new())]
+    cluster_touchpoints: Vec<String>,
 }
 
 
@@ -138,7 +147,7 @@ async fn main() {
 
 
     let filter_set: Option<HashSet<String>> = filters.map(|filter| filter.into_iter().collect());
-    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token.clone(), filter_set) {
+    let nordvpn = match nordvpn::NordVPN::new(nordvpn_path, args.token.clone(), filter_set, args.dns_lookup.clone()) {
         Ok(nordvpn) => nordvpn,
         Err(err) => {
             log::error!("Failed to create NordVPN instance: {}", err);
