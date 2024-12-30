@@ -5,8 +5,11 @@
 
 use std::collections::HashMap;
 use std::time::{SystemTime, Duration};
+use std::collections::VecDeque;
+use chrono::DateTime;
 
 
+use proxy_functions::RequestAttributes;
 use serde_derive::{Deserialize, Serialize};
 use utoipa::schema;
 
@@ -21,30 +24,175 @@ mod support;
 pub mod proxy_functions;
 
 
-
+//type Timestamp = SystemTime;
+type Timestamp = DateTime<chrono::Utc>;
 type RunReturnType = Result<(), Box<dyn std::error::Error>>;
+type Retention = Option<u64>;
 
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+pub struct HostMonitorCompact {
+    pub active_connections: u16,
+    pub lifetime_connections: u16,
+    pub last: Option<SchemaCompatibleSystemTime>,
+}
+
+
+#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[derive(utoipa::ToSchema)]
+pub struct HostMonitor {
+    pub active_connections: u16,
+    pub lifetime_connections: u16,
+
+    pub capacity: usize,
+
+    pub last: Option<SchemaCompatibleSystemTime>,
+    #[schema(value_type = Vec<SchemaCompatibleSystemTime>)]
+    pub times: VecDeque<SchemaCompatibleSystemTime>
+}
+
+
+impl HostMonitor {
+
+    pub fn new () -> Self {
+        HostMonitor::new_with_capacity(0)
+    }
+
+    pub fn new_with_capacity(capacity: usize) -> Self {
+        HostMonitor {
+            active_connections: 0,
+            lifetime_connections: 0,
+            capacity: capacity,
+            last: None,
+            times: VecDeque::new() // Set the desired capacity
+        }
+    }
+
+    pub fn check_in(&mut self) -> () {
+        self.last = Some(SchemaCompatibleSystemTime::now());
+
+        if self.capacity > 0 {
+            if self.times.len() == self.capacity {
+                self.times.pop_front();
+            }
+            self.times.push_back(self.last.clone().unwrap());
+        }
+
+        self.active_connections += 1;
+        self.lifetime_connections += 1;
+    }
+
+    pub fn check_out(&mut self) -> () {
+        self.active_connections -= 1;
+    }
+
+    pub fn compact(&self) -> HostMonitorCompact {
+        HostMonitorCompact {
+            active_connections: self.active_connections,
+            lifetime_connections: self.lifetime_connections,
+            last: self.last.clone()
+        }
+    }
+
+    pub fn purge(&mut self, retention: Option<u64>) -> () {
+        self.times = self.times.iter().filter(|time| (chrono::Utc::now() - time.0).num_seconds() < retention.unwrap_or(60) as i64).map(|time| time.clone()).collect();
+    }
+
+
+    /*
+    pub fn reset(&mut self) -> () {
+        self.active_connections = 0;
+        self.lifetime_connections = 0;
+        self.last = None;
+        self.times.clear();
+    }
+    */
+}
+
+
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ProxyMonitorCompact {
+    pub active_connections: u16,
+    pub lifetime_connections: u16,
+    pub hosts: HashMap<String, HostMonitorCompact>
+}
+
+
+#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[derive(utoipa::ToSchema)]
+pub struct ProxyMonitor {
+    pub active_connections: u16,
+    pub lifetime_connections: u16,
+    pub hosts: HashMap<String, HostMonitor>
+}
+
+impl ProxyMonitor {
+    pub fn new(monitored_hosts: Vec<String>) -> Self {
+        ProxyMonitor {
+            active_connections: 0,
+            lifetime_connections: 0,
+            hosts: monitored_hosts.iter().map(|host| (host.clone(), HostMonitor::new())).collect(),
+        }
+    }
+
+    pub fn check_in(&mut self, request_attributes: &RequestAttributes) -> &mut Self {
+        self.active_connections += 1;
+        self.lifetime_connections += 1;
+        let host = request_attributes.uri.host().expect("uri has no host");
+        if let Some(host_monitor) = self.hosts.get_mut(host) {
+            host_monitor.check_in();
+        }
+        self
+    }
+
+    pub fn check_out(&mut self, request_attributes: &RequestAttributes) -> &mut Self {
+        self.active_connections -= 1;
+        if let Some(host_monitor) = self.hosts.get_mut(request_attributes.uri.host().expect("uri has no host")) {
+            host_monitor.check_out();
+        }
+        self
+    }
+
+    pub fn compact(&self) -> ProxyMonitorCompact {
+        ProxyMonitorCompact {
+            active_connections: self.active_connections,
+            lifetime_connections: self.lifetime_connections,
+            hosts: self.hosts.iter().map(|(host, monitor)| (host.clone(), monitor.compact())).collect()
+        }
+    }
+
+    pub fn purge(&mut self, retention: Retention) {
+            self.hosts.iter_mut().for_each(|(_, host_monitor)| {
+                host_monitor.purge(retention);
+            });
+        }
+}
 /*
+
 
 */
 #[derive(Serialize, Deserialize)]
-//#[derive(utoipa::ToSchema)]
+#[derive(Debug, Clone)]
+#[derive(utoipa::ToSchema)]
 pub struct ProxyStatus {
     pub drained: bool,
-    inbound_connections: HashMap<String, SystemTime>,
+    inbound_connections: HashMap<String, SchemaCompatibleSystemTime>,
     inflight_connection_count: u16,
     inflight_connect_requests: u16,
-    monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>
+    //monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>
+    monitor: ProxyMonitor
 }
 
 #[derive(Serialize, Deserialize)]
-//#[derive(utoipa::ToSchema)]
+#[derive(utoipa::ToSchema)]
 pub struct ProxyStatusCompact {
     drained: bool,
-    inbound_connections: HashMap<String, SystemTime>,
+    inbound_connections: HashMap<String, SchemaCompatibleSystemTime>,
     inflight_connections: u16,
     inflight_connect_requests: u16,
-    monitored_hosts: HashMap<String, i32>
+    //monitored_hosts: HashMap<String, i32>
+    monitor: ProxyMonitorCompact
 }
 
 #[derive(Serialize, Deserialize)]
@@ -54,11 +202,11 @@ pub struct ProxyStatusSanitizerResult {
 #[derive(Serialize, Deserialize)]
 #[derive(Debug, Clone)]
 #[derive(utoipa::ToSchema)]
-#[schema(as = SystemTime, value_type = String)]
-pub struct SchemaCompatibleSystemTime(SystemTime);
+#[schema(as = Timestamp, value_type = String)]
+pub struct SchemaCompatibleSystemTime(Timestamp);
 impl SchemaCompatibleSystemTime {
     pub fn now() -> Self {
-        SchemaCompatibleSystemTime(SystemTime::now())
+        SchemaCompatibleSystemTime(chrono::Utc::now())
     }
 }
 
@@ -194,18 +342,20 @@ pub struct ProxySettingsRotationIntervalUpdate {
 #[derive(Serialize, Deserialize)]
 pub struct ProxySetting {
     pub rotation: ProxyRotationMode,
-    pub monitored_hosts: Vec<String>,
+    //pub monitored_hosts: Vec<String>,
     pub rotation_retries: u8
 }
+
 
 #[derive(Debug, Clone)]
 pub struct ProxyState {
     pub nordvpn: NordVPN,
     pub drained: bool,
-    inbound_connections: HashMap<String, SystemTime>,
+    inbound_connections: HashMap<String, SchemaCompatibleSystemTime>,
     inflight_connections: u16,
     inflight_connect_requests: u16,
-    monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>,
+    //monitored_hosts: HashMap<String, (Option<SystemTime>, Vec<SystemTime>)>,
+    monitor: ProxyMonitor,
     last_rotation: SchemaCompatibleSystemTime,
     pub settings: ProxySetting,
 }
@@ -218,11 +368,12 @@ impl ProxyState {
             inbound_connections: HashMap::new(),
             inflight_connections: 0,
             inflight_connect_requests: 0,
-            monitored_hosts: monitored_hosts.iter().map(|host| (host.clone(), (None, vec![]))).collect(),
+            //monitored_hosts: monitored_hosts.iter().map(|host| (host.clone(), (None, vec![]))).collect(),
+            monitor: ProxyMonitor::new(monitored_hosts),
             last_rotation: SchemaCompatibleSystemTime::now(),
             settings: ProxySetting {
                 rotation: rotation,
-                monitored_hosts: monitored_hosts,
+                //monitored_hosts: monitored_hosts,
                 rotation_retries: 3
             }
         }
@@ -234,14 +385,13 @@ impl ProxyState {
             inbound_connections: self.inbound_connections.clone(),
             inflight_connections: self.inflight_connections,
             inflight_connect_requests: self.inflight_connect_requests,
-            monitored_hosts: self.monitored_hosts.iter().map(|(host, (_last, times))| (host.clone(), times.len() as i32)).collect()
+            //monitored_hosts: self.monitored_hosts.iter().map(|(host, (_last, times))| (host.clone(), times.len() as i32)).collect()
+            monitor: self.monitor.compact()
         }
     }
 
     pub fn purge(&mut self, retention: Option<u64>) {
-        self.monitored_hosts.iter_mut().for_each(|(_host, (_last, times))| {
-            times.retain(|time| time.elapsed().unwrap().as_secs() < retention.unwrap_or(60));
-        });
+        self.monitor.purge(retention)
     }
 
 
@@ -255,12 +405,12 @@ impl ProxyState {
             inbound_connections: self.inbound_connections.clone(),
             inflight_connection_count: self.inflight_connections,
             inflight_connect_requests: self.inflight_connect_requests,
-            monitored_hosts: self.monitored_hosts.clone()
+            monitor: self.monitor.clone(),
         }
     }
 
     pub fn add_connection(&mut self, peer_addr: String) {
-        self.inbound_connections.insert(peer_addr, SystemTime::now());
+        self.inbound_connections.insert(peer_addr, SchemaCompatibleSystemTime::now());
         self.inflight_connections += 1;
     }
 
@@ -272,15 +422,19 @@ impl ProxyState {
         self.settings.rotation = rotation;
     }
 
-    pub fn add_connect_request(&mut self, host: &str) {
-        self.monitored_hosts.get_mut(host).map(|(last, times)| {
-            times.push(SystemTime::now());
-            *last = Some(SystemTime::now());
-        });
+    pub fn add_connect_request(&mut self, request_attributes: &RequestAttributes) {
+        //let host = req.uri().host().expect("uri has no host");
+
+        self.monitor.check_in(request_attributes);
+        //self.monitored_hosts.get_mut(host).map(|(last, times)| {
+        //    times.push(SystemTime::now());
+        //    *last = Some(SystemTime::now());
+        //});
         self.inflight_connect_requests += 1;
     }
 
-    pub fn remove_connect_request(&mut self) {
+    pub fn remove_connect_request(&mut self, request_attributes: &RequestAttributes) {
+        self.monitor.check_out(request_attributes);
         self.inflight_connect_requests -= 1;
     }
 

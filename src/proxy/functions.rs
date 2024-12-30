@@ -15,9 +15,11 @@ use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
 use hyper::{Method, Request, Response};
 
+use http::Uri;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::bytes;
+
 
 
 
@@ -121,7 +123,8 @@ async fn proxy(
     res
 }
 
-fn host_addr(uri: &http::Uri) -> Option<String> {
+
+pub fn host_addr(uri: &http::Uri) -> Option<String> {
     uri.authority().and_then(|auth| Some(auth.to_string()))
 }
 
@@ -138,10 +141,11 @@ fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
 }
 
 async fn connect_handler(req: Request<hyper::body::Incoming>, peer_addr: String, proxy_state: Arc<RwLock<ProxyState>>) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    let host = req.uri().host().expect("uri has no host");
-    if let Some(addr) = host_addr(req.uri()) {
 
-        proxy_state.write().unwrap().add_connect_request(host);
+    if let Some(addr) = host_addr(req.uri()) {
+        
+        let request_attributes = RequestAttributes::from_request(&req);
+        proxy_state.write().unwrap().add_connect_request(&request_attributes);
         tokio::task::spawn(async move {
             match hyper::upgrade::on(req).await {
                 Ok(upgraded) => {
@@ -159,9 +163,9 @@ async fn connect_handler(req: Request<hyper::body::Incoming>, peer_addr: String,
                     log::error!("upgrade error: {}", e);
                 },
             }
-            proxy_state.write().unwrap().remove_connect_request();
-            proxy_state.write().unwrap().remove_connection(peer_addr.to_string());
         });
+        proxy_state.write().unwrap().remove_connect_request(&request_attributes);
+        proxy_state.write().unwrap().remove_connection(peer_addr.to_string());
         //t.await.unwrap();
 
         
@@ -189,4 +193,17 @@ async fn tunnel(upgraded: Upgraded, addr: String) -> std::io::Result<(u64, u64)>
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
     Ok((from_client, from_server))
+}
+
+
+pub struct RequestAttributes {
+    pub uri: Uri,
+}
+
+impl RequestAttributes {
+    pub fn from_request(request: &Request<hyper::body::Incoming>) -> Self {
+        RequestAttributes {
+            uri: request.uri().clone()
+        }
+    }
 }

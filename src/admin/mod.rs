@@ -660,11 +660,11 @@ pub mod restapi {
         path = "/status",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "List all todos successfully", body = ProxyStatus)
         )
     )]
-    async fn proxy_status(State(admin_state): State<AdminState>) -> Json<String> {
-        Json(format!("{:?}", serde_json::to_string(&admin_state.read().unwrap().proxy.read().unwrap().status()).unwrap()))
+    async fn proxy_status(State(admin_state): State<AdminState>) -> Json<ProxyStatus> {
+        Json(admin_state.read().unwrap().proxy.read().unwrap().status())
     }
 
     #[utoipa::path(
@@ -684,7 +684,7 @@ pub mod restapi {
         path = "/status/compact",
         //tag = TODO_TAG,
         responses(
-            (status = 200, description = "List all todos successfully", body = [String])
+            (status = 200, description = "Show compact proxy status", body = ProxyStatusCompact)
         )
     )]
     async fn proxy_status_compact(State(admin_state): State<AdminState>) -> Json<ProxyStatusCompact> {

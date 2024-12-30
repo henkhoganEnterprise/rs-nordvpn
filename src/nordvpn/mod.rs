@@ -219,7 +219,7 @@ impl NordVPN {
         log::debug!("Disconnecting from NordVPN...");
         let output = self._nordvpn_command(vec!["disconnect".to_string()]);
         if output.0 {
-            log::info!("Disonnected: {}", output.1);
+            log::info!("Disconnected: {}", output.1);
             return Ok(NordVpnDisconnectOutput {
                 disconnected: true
             });
