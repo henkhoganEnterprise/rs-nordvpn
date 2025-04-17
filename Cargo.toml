@@ -4,28 +4,28 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7.9", features = ["macros"] } 
-chrono = { version = "0.4.38", features = ["serde"] }
-clap = { version = "4.5.22", features = ["derive"] } 
-dns-lookup = "2.0.4"
-env_logger = "0.11.5"
-gethostname = "0.5"
-http = "1.2"
+axum = { version = "0.8", features = ["macros"] } 
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] } 
+dns-lookup = "2.0"
+env_logger = "0.11"
+gethostname = "1.0"
+http = "1.3"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["full"] }
+hyper = { version = "1.6", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 local-ip-address = "0.6"
-log = "0.4.22"
-pin-project-lite = "*"
+log = "0.4"
+pin-project-lite = "0.2"
 reqwest = { version = "0.12", features = ["json"] }
-route-recognizer = "0.3.1"
-serde = { version = "1.0.120", features = ["default"] }
+route-recognizer = "0.3"
+serde = { version = "1.0", features = ["default"] }
 serde_derive = "1.0"
-serde_json = { version = "1.0.120", features = ["default"] }
-tokio = { version = "1.42.0", features = ["full"] }
-tokio-util = "*"
-uuid = { version = "1.0", features = ["v4"] }
-utoipa = { version = "5", features = ["axum_extras"] }
-utoipa-axum = "0.1"
-utoipa-swagger-ui = { version = "*" ,features = ["axum"] }
+serde_json = { version = "1.0", features = ["default"] }
+tokio = { version = "1.44", features = ["full"] }
+tokio-util = "0.7"
+uuid = { version = "1.16", features = ["v4"] }
+utoipa = { version = "5.3", features = ["axum_extras"] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9.0" ,features = ["axum"] }
 

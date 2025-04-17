@@ -1,6 +1,6 @@
 use admin::Admin;
 use log;
-use clap::{builder::Str, Parser};
+use clap::Parser;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
@@ -24,7 +24,7 @@ use helper::CurlClient;
 
 #[path = "./proxy/mod.rs"]
 mod proxy;
-use proxy::{ProxyRotationMode, ProxyState, TimedProxyRotation};
+use proxy::{ProxyRotationMode, ProxyState, RequestCountProxyRotation, TimedProxyRotation};
 
 mod tokiort;
 
@@ -60,6 +60,10 @@ struct CliArgs {
     filter: Vec<String>,
 
     #[arg(short, long)]
+    #[clap(default_value_t = ProxyRotationMode::Manual)]
+    proxy_rotation_mode: ProxyRotationMode,
+
+    #[arg(short, long)]
     #[clap(default_value_t = 0)]
     proxy_rotation_argument: u64,
 
@@ -68,6 +72,13 @@ struct CliArgs {
     cluster_touchpoints: Vec<String>,
 }
 
+
+fn create_proxy_rotation_mode_map() -> HashMap<String, ProxyRotationMode> {
+    let mut map = HashMap::new();
+    map.insert("manual".to_string(), ProxyRotationMode::Manual);
+    map.insert("timed".to_string(), ProxyRotationMode::Timed(TimedProxyRotation::new(0)));
+    map
+}
 
 
 #[tokio::main]
@@ -176,10 +187,16 @@ async fn main() {
     log::info!("Monitored hosts: {:?}", args.monitored_hosts);
     log::info!("Proxy rotation argument: {}", args.proxy_rotation_argument);
 
-    let mut proxy_rotation = ProxyRotationMode::Manual;
-    if args.proxy_rotation_argument > 0 {
-        proxy_rotation = ProxyRotationMode::Timed(TimedProxyRotation::new(args.proxy_rotation_argument));
-    }
+    let mut proxy_rotation = match args.proxy_rotation_mode {
+        ProxyRotationMode::Manual => ProxyRotationMode::Manual,
+        ProxyRotationMode::Timed(_) => ProxyRotationMode::Timed(TimedProxyRotation::new(args.proxy_rotation_argument)),
+        ProxyRotationMode::RequestCount(_) => ProxyRotationMode::RequestCount(RequestCountProxyRotation::new(args.proxy_rotation_argument.try_into().unwrap())),
+    };
+    
+    //let mut proxy_rotation = ProxyRotationMode::Manual;
+    //if args.proxy_rotation_argument > 0 {
+    //    proxy_rotation = ProxyRotationMode::Timed(TimedProxyRotation::new(args.proxy_rotation_argument));
+    //}
 
     let proxy_state = Arc::new(RwLock::new(ProxyState::new(nordvpn, args.monitored_hosts, proxy_rotation)));
     

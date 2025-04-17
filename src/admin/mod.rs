@@ -9,6 +9,7 @@ use helper::CurlClient;
 use serde::{Deserialize, Serialize};
 
 
+
 #[path = "../benches/support/mod.rs"]
 mod support;
 
@@ -251,7 +252,7 @@ pub mod restapi {
 
     #[utoipa::path(
         get,
-        path = "/admin/rotation",
+        path = "/rotation",
         //tag = TODO_TAG,
         responses(
             (status = 200, description = "List all todos successfully", body = [String])

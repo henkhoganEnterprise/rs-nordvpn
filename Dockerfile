@@ -1,6 +1,6 @@
 ## Preparation: IMAGE ARGS need to be set at the beginning
 ARG APP_SOURCE_IMAGE
-ARG BUILD_SOURCE_IMAGE=rust:1.83
+ARG BUILD_SOURCE_IMAGE=rust:1.86
 
 ## Layer 1
 FROM $BUILD_SOURCE_IMAGE AS build-image
@@ -14,10 +14,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 
 ## Layer 2
-FROM ubuntu:24.10 AS app-image
+FROM ubuntu:25.04 AS app-image
 WORKDIR /app
 
-ARG NORDVPN_CLIENT_VERSION=3.19.2
+ARG NORDVPN_CLIENT_VERSION=3.20.1
 RUN apt-get update && \
     apt-get install -y wget iputils-ping curl && \
     wget -O /tmp/nordrepo.deb https://repo.nordvpn.com/deb/nordvpn/debian/pool/main/n/nordvpn-release/nordvpn-release_1.0.0_all.deb && \
