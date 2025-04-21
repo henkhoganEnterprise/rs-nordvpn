@@ -14,10 +14,6 @@ env:
   DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}  
   DOCKER_TARGET_PLATFORM_ARCHITECTURE: "arm64"
   DOCKER_TARGET_PLATFORM_OS: "linux"
-  #DOCKER_BUILDKIT: 1
-  #BUILDKIT_INLINE_CACHE: 1
-  BUILD_SOURCE_IMAGE: "rust:1.80"
-  APP_SOURCE_IMAGE: "ubuntu:24.04"
 
 jobs:
 
@@ -37,11 +33,6 @@ jobs:
           username: ${{ vars.DOCKER_REGISTRY_USERNAME }}
           password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
 
-      - name: Pull source images
-        run: |
-          docker pull ${{ env.BUILD_SOURCE_IMAGE }}; \
-          docker pull ${{ env.APP_SOURCE_IMAGE }}
-
       - name: Build app image
         run: |
           cd ./repo/predictive && \
@@ -49,8 +40,6 @@ jobs:
           --target app-image \
           --file Dockerfile \
           --platform '${{ env.DOCKER_TARGET_PLATFORM_OS }}/${{ env.DOCKER_TARGET_PLATFORM_ARCHITECTURE }}' \
-          --build-arg APP_SOURCE_IMAGE='${{ env.APP_SOURCE_IMAGE }}' \
-          --build-arg BUILD_SOURCE_IMAGE='${{ env.BUILD_SOURCE_IMAGE }}' \
           --build-arg COMMIT='${{ github.sha }}' \
           --build-arg GITHUB_AUTH='${{ secrets.REQUIREMENTS_GITHUB_AUTH }}' \
           --build-arg VERSION='${{ github.run_number }}' \
