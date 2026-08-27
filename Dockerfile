@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM ubuntu:25.04 AS app-image
 WORKDIR /app
 
-ARG NORDVPN_CLIENT_VERSION=3.20.1
+ARG NORDVPN_CLIENT_VERSION=5.3.0
 RUN apt-get update && \
     apt-get install -y wget iputils-ping curl && \
     wget -O /tmp/nordrepo.deb https://repo.nordvpn.com/deb/nordvpn/debian/pool/main/n/nordvpn-release/nordvpn-release_1.0.0_all.deb && \
