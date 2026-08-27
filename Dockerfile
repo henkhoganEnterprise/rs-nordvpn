@@ -7,6 +7,7 @@ FROM $BUILD_SOURCE_IMAGE AS build-image
 
 COPY src src
 COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/home/root/app/target \
