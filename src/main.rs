@@ -217,12 +217,13 @@ async fn main() {
     let admin_listener = tokio::net::TcpListener::bind(admin_addr).await.unwrap();
     let admin_router = router(Arc::new(admin.into()));
 
+    log::info!("Admin Listening on http://{}", admin_addr);
     
     let admin_task = tokio::spawn(async move {
         tokio::select! {
             _ = admin_token.cancelled() => {
                 // The token was cancelled, task can shut down
-                log::info!("Proxy task was cancelled");
+                log::info!("Admin task was cancelled");
             }
             _ = axum::serve(admin_listener, admin_router.into_make_service()) => {
                 // Long work has completed

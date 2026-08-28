@@ -2,9 +2,10 @@ cargo build
 cargo run $NORDVPN_TOKEN
 
 docker build -t nordvpn-rs . 
-docker build -t nordvpn-rs . --build-arg TARGETPLATFORM=amd64 --build-arg BUILD_SOURCE_IMAGE=rust:1.86
+docker build -t nordvpn-rs . --build-arg TARGETPLATFORM=amd64 --build-arg BUILD_SOURCE_IMAGE=rust:1.98
 
 source .env
+docker container stop nordvpn
 docker container prune -f
 docker run --cap-add NET_ADMIN --cap-add NET_RAW -p 3180:80 -p 3128:3128 --name nordvpn --env RUST_BACKTRACE=1 nordvpn-rs --token $NORDVPN_TOKEN
 

@@ -10,7 +10,6 @@ use std::time::{Duration, SystemTime};
 
 use proxy_functions::RequestAttributes;
 use serde_derive::{Deserialize, Serialize};
-use utoipa::schema;
 
 use crate::nordvpn::NordVPN;
 
@@ -195,8 +194,8 @@ pub struct ProxyStatusCompact {
     monitor: ProxyMonitorCompact,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ProxyStatusSanitizerResult {}
+//#[derive(Serialize, Deserialize)]
+//pub struct ProxyStatusSanitizerResult {}
 
 #[derive(Serialize, Deserialize, Debug, Clone, utoipa::ToSchema)]
 #[schema(as = Timestamp, value_type = String)]

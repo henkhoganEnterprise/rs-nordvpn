@@ -1,6 +1,6 @@
 ## Preparation: IMAGE ARGS need to be set at the beginning
 ARG APP_SOURCE_IMAGE
-ARG BUILD_SOURCE_IMAGE=rust:1.86
+ARG BUILD_SOURCE_IMAGE=rust:1.98
 
 ## Layer 1
 FROM $BUILD_SOURCE_IMAGE AS build-image
@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 
 ## Layer 2
-FROM ubuntu:25.04 AS app-image
+FROM ubuntu:26.04 AS app-image
 WORKDIR /app
 
 ARG NORDVPN_CLIENT_VERSION=5.3.0
@@ -24,7 +24,7 @@ RUN apt-get update && \
     wget -O /tmp/nordrepo.deb https://repo.nordvpn.com/deb/nordvpn/debian/pool/main/n/nordvpn-release/nordvpn-release_1.0.0_all.deb && \
     apt-get install -y /tmp/nordrepo.deb && \
     apt-get update && \
-    apt-get install -y nordvpn=${NORDVPN_CLIENT_VERSION} && \
+    apt-get install -y --no-install-recommends nordvpn=${NORDVPN_CLIENT_VERSION} && \
     apt-get remove -y wget nordvpn-release && \
     rm /tmp/nordrepo.deb
 
